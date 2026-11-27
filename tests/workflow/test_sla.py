@@ -249,7 +249,7 @@ def test_local_timezone_boundary(db, in_budget_policy, make_req, org):
     with freeze_time("2026-11-27T18:30:00Z"):  # 01:30 ngày 28/11 giờ Việt Nam
         # người duyệt riêng, phân công lập trong thời điểm đóng băng (không phụ thuộc ngày chạy thật)
         owner_itd = grant(UserFactory(username="tz_owner_itd"), R.BUDGET_OWNER, org.itd)
-        owner_adm = grant(UserFactory(username="tz_owner_adm"), R.BUDGET_OWNER, org.adm)
+        grant(UserFactory(username="tz_owner_adm"), R.BUDGET_OWNER, org.adm)  # nhánh ADM có người duyệt
         D.create_delegation(owner_itd, deputy, start_date=date(2026, 11, 26), end_date=date(2026, 11, 27))
         D.create_delegation(owner_itd, late, start_date=date(2026, 11, 28), end_date=date(2026, 11, 28))
         Outbox.objects.all().delete()
