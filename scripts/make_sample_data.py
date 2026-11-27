@@ -2,7 +2,7 @@
 
     python scripts/make_sample_data.py --out sample-data/
 
-Tạo `Budget Control - DEMO.xlsx` (4 sheet đúng tiêu đề file thật) và `hris_fake.json`.
+Tạo `Budget Control - DEMO.xlsx` (5 sheet đúng tiêu đề file thật) và `hris_fake.json`.
 Mọi tên, mã, số liệu đều là giả; kết quả xác định nhờ random.seed(42).
 """
 
@@ -48,10 +48,24 @@ PROJECTS = [
     ("DEMO_P2", "Dự án cải tạo tầng 3 (giả)", "Cơ sở vật chất", 2025),
 ]
 LOCATIONS = ["HSC", "HNB"]
+L9_HEADERS = ["Loại hình", "Mã số thuế", "Tên nhà cung cấp"]
+# Nhà cung cấp GIẢ: tên bịa, mã số thuế đúng định dạng nhưng không thuộc doanh nghiệp thật.
+VENDORS = [
+    ["Tổ chức", "0100000011", "CÔNG TY TNHH MẪU MỘT (GIẢ)"],
+    ["Tổ chức", "0100000028", "CÔNG TY CỔ PHẦN DỊCH VỤ THỬ NGHIỆM (GIẢ)"],
+    ["Tổ chức", "0100000035-001", "CHI NHÁNH HÀ NỘI - CÔNG TY VÍ DỤ (GIẢ)"],
+    ["Tổ chức", "0300000042", "CÔNG TY TNHH THƯƠNG MẠI DEMO (GIẢ)"],
+    ["Tổ chức", "0300000059-006", "CHI NHÁNH TP.HCM - CÔNG TY GIẢ LẬP (GIẢ)"],
+    ["Tổ chức", "0300000066", "CÔNG TY TNHH VĂN PHÒNG PHẨM MẪU (GIẢ)"],
+    ["Tổ chức", "0400000073", "CÔNG TY CỔ PHẦN THIẾT BỊ KIỂM THỬ (GIẢ)"],
+    ["Tổ chức", "0400000080", "CÔNG TY TNHH VẬN TẢI VÍ DỤ (GIẢ)"],
+    ["Cá nhân", "001000000019", "NGUYỄN VĂN MẪU (GIẢ)"],
+    ["Cá nhân", "079000000026", "TRẦN THỊ THỬ (GIẢ)"],
+]
 
 
-def write_workbook(path, l8_rows, l10_rows, expense_rows, capex_rows) -> None:
-    """Ghi workbook 4 sheet với tiêu đề đúng file thật. Mỗi hàng là list giá trị theo thứ tự cột."""
+def write_workbook(path, l8_rows, l10_rows, expense_rows, capex_rows, vendor_rows=None) -> None:
+    """Ghi workbook 4 sheet (+ L9_Code nếu có vendor_rows) với tiêu đề đúng file thật. Mỗi hàng là list giá trị theo thứ tự cột."""
     wb = Workbook()
     wb.properties.created = wb.properties.modified = datetime(2026, 1, 1)
     wb.properties.creator = "make_sample_data"
@@ -62,6 +76,7 @@ def write_workbook(path, l8_rows, l10_rows, expense_rows, capex_rows) -> None:
         ("L10_Code", L10_HEADERS, l10_rows),
         ("Budget_Expense", EXPENSE_HEADERS, expense_rows),
         ("Budget_Capex", CAPEX_HEADERS, capex_rows),
+        *([("L9_Code", L9_HEADERS, vendor_rows)] if vendor_rows is not None else []),
     ]:
         sheet = ws if title == "L8_Code" else wb.create_sheet(title)
         sheet.append(headers)
@@ -155,7 +170,7 @@ def main(argv=None) -> None:
     args = parser.parse_args(argv)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    write_workbook(out / WORKBOOK_NAME, *demo_rows())
+    write_workbook(out / WORKBOOK_NAME, *demo_rows(), VENDORS)
     (out / HRIS_NAME).write_text(
         json.dumps(hris_data(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

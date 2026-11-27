@@ -2,11 +2,11 @@
 
 Quy trình: đọc và kiểm tra TOÀN BỘ file trước (báo cáo làm sạch); chỉ khi không còn lỗi và không
 phải `dry_run` mới ghi dữ liệu, trong một transaction. Audit `budget.imported` được gọi cuối cùng
-(audit giữ khoá toàn cục). Sheet L9_Code (NCC) do Task 8 xử lý, không đọc ở đây.
+(audit giữ khoá toàn cục). Sheet L9_Code (NCC), nếu có, được kiểm tra chung báo cáo và ghi cùng transaction.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
@@ -15,7 +15,12 @@ from openpyxl import load_workbook
 
 from apps.accounts.models import OrgUnit
 from apps.audit import service as audit
+from apps.core.imports import (
+    ImportIssue,
+    ImportReport,
+)
 from apps.core.money import round_vnd
+from apps.vendors import importer as vendor_importer
 
 from . import ledger
 from .models import (
@@ -34,26 +39,6 @@ from .models import (
 SHEET_L8, SHEET_L10, SHEET_EXPENSE, SHEET_CAPEX = "L8_Code", "L10_Code", "Budget_Expense", "Budget_Capex"
 LOCATIONS = {"HSC": "TP.HCM (HO)", "HNB": "Hà Nội"}
 _MAIN_RE = re.compile(r"^\s*(\d+)\s*\.\s*(.+?)\s*$")
-
-
-@dataclass
-class ImportIssue:
-    sheet: str
-    row: int
-    column: str
-    message: str
-
-
-@dataclass
-class ImportReport:
-    issues: list[ImportIssue] = field(default_factory=list)
-    created: dict[str, int] = field(default_factory=dict)
-    skipped_other_year: int = 0
-    totals: dict[str, Decimal] = field(default_factory=dict)
-
-    @property
-    def ok(self) -> bool:
-        return not self.issues
 
 
 @dataclass
@@ -289,6 +274,10 @@ def import_budget_workbook(
         capex_codes: set[str] = set()
         for sheet in (SHEET_EXPENSE, SHEET_CAPEX):
             _read_budget_rows(wb, sheet, l8, l10, year, unit_code, report, entries, capex_codes)
+        vendor_rows = vendor_importer.read_vendor_sheet(wb, report)
+        planned_vendors = (
+            vendor_importer.validate_vendor_rows(vendor_rows, report) if vendor_rows is not None else None
+        )
     finally:
         wb.close()
 
@@ -334,6 +323,8 @@ def import_budget_workbook(
         "lines": len(lines),
         "entries": len(entries),
     }
+    if planned_vendors is not None:
+        vendor_importer.summarize_vendors(planned_vendors, report)
     if dry_run:
         return report
 
@@ -393,6 +384,8 @@ def import_budget_workbook(
             entry.source_type, entry.source_id = "budget.import", f"{unit_code}:{year}"
             built.append(entry)
         BudgetEntry.objects.bulk_create(built)
+        if planned_vendors:
+            vendor_importer.apply_vendors(planned_vendors, user, report)
         audit.record(
             "budget.imported", unit, actor=user,
             changes={

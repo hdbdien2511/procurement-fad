@@ -41,6 +41,7 @@ class Command(BaseCommand):
         out(f"Tổng kế hoạch gốc: {format_vnd(report.totals['ORIGINAL'])} đ; "
             f"tổng điều chỉnh: {format_vnd(report.totals['ADJUST'])} đ")
         labels = {"cost_codes": "mã chi phí mới", "projects": "dự án mới", "lines": "dòng ngân sách",
-                  "entries": "bút toán"}
+                  "entries": "bút toán",
+                  "vendors": "nhà cung cấp mới", "vendors_updated": "nhà cung cấp cập nhật"}
         out("; ".join(f"{labels[k]}: {v}" for k, v in report.created.items()))
         out("Đã ghi dữ liệu." if opts["commit"] else "Chạy thử: chưa ghi gì (thêm --commit để ghi).")

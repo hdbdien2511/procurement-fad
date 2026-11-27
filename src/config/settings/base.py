@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.ui",
     "apps.documents",
     "apps.budget",
+    "apps.vendors",
 ]
 
 MIDDLEWARE = [
