@@ -312,3 +312,96 @@ def release(source, user) -> None:
             actor=user,
             changes={"entries": [_entry_summary(e) for e in entries]},
         )
+
+
+# --- bút toán phân bổ theo tháng (bổ sung / điều chuyển ngân sách) -------------------------------------
+
+def _dims(line: BudgetLine) -> tuple:
+    return line.year, line.budget_unit_id, line.cost_code_id, line.project_id, line.location_id
+
+
+def _plan_legs(legs, start: date, months: int) -> list[tuple[BudgetLine, date, Decimal]]:
+    """Kế hoạch `(dòng gốc, kỳ, số tiền có dấu)`: mỗi chân `(dòng, số tiền ≠ 0)` chia đều theo tháng."""
+    legs = [(line, _to_vnd(amount)) for line, amount in legs]
+    for line, amount in legs:
+        if amount == 0:
+            raise ValueError("Số tiền bút toán phải khác 0.")
+        if start.year < line.year:
+            raise ValueError(f"Kỳ bắt đầu {start:%m/%Y} sớm hơn năm {line.year} của dòng ngân sách {line}.")
+    return [(line, period, amt) for line, amount in legs for period, amt in allocate(amount, start, months)]
+
+
+def _existing_line_for_year(line: BudgetLine, year: int) -> BudgetLine:
+    """Dòng cùng chiều của năm `year`; chưa có thì trả bản chưa lưu (số khả dụng 0)."""
+    dims = {"budget_unit_id": line.budget_unit_id, "cost_code_id": line.cost_code_id,
+            "project_id": line.project_id, "location_id": line.location_id}
+    return BudgetLine.objects.filter(year=year, **dims).first() or BudgetLine(year=year, **dims)
+
+
+def _other_year_lines(plan, *, create: bool) -> dict[tuple[int, int], BudgetLine]:
+    """`(pk dòng gốc, năm)` → dòng cùng chiều của năm khác cho các kỳ ngoài năm của dòng gốc."""
+    others: dict[tuple[int, int], BudgetLine] = {}
+    for line, period, _ in sorted(plan, key=lambda r: (r[0].pk, r[1])):
+        key = (line.pk, period.year)
+        if period.year != line.year and key not in others:
+            others[key] = (_line_for_year if create else _existing_line_for_year)(line, period.year)
+    return others
+
+
+def _target(line: BudgetLine, period: date, others) -> BudgetLine:
+    return line if period.year == line.year else others[(line.pk, period.year)]
+
+
+def _debit_shortfalls(rows) -> list[tuple[BudgetLine, Decimal]]:
+    """Phần thiếu của các khoản ghi giảm `(dòng đích, số tiền < 0)` so với số khả dụng cả năm của dòng."""
+    need: dict[tuple, Decimal] = defaultdict(lambda: ZERO)
+    targets: dict[tuple, BudgetLine] = {}
+    for target, amt in rows:
+        if amt < 0:
+            need[_dims(target)] += -amt
+            targets[_dims(target)] = target
+    shortfalls = []
+    for key, amount in need.items():
+        target = targets[key]
+        available = balance(target).available if target.pk is not None else ZERO
+        if amount > available:
+            shortfalls.append((target, amount - available))
+    return shortfalls
+
+
+def check_allocated(legs: list[tuple[BudgetLine, Decimal]], *, start: date, months: int):
+    """Chạy thử `post_allocated` (không khoá, không ghi gì): trả danh sách thiếu của các chân ghi giảm."""
+    plan = _plan_legs(legs, start, months)
+    others = _other_year_lines(plan, create=False)
+    return _debit_shortfalls([(_target(line, period, others), amt) for line, period, amt in plan])
+
+
+def post_allocated(
+    legs: list[tuple[BudgetLine, Decimal]], kind: str, *, start: date, months: int, source, user
+) -> list[BudgetEntry]:
+    """Ghi bút toán `kind` cho từng chân `(dòng, số tiền có dấu)`, chia đều theo tháng từ `start`.
+
+    Kỳ ngoài năm của dòng ghi vào dòng cùng chiều của năm đó (tự tạo nếu chưa có), như `reserve`.
+    Chân âm (ghi giảm) phải đủ số khả dụng cả năm trên dòng đích, thiếu thì raise `InsufficientBudget`
+    (không ghi gì). Khoá mọi dòng theo pk trước khi kiểm tra; MỘT bản audit `budget.entries_posted`
+    gắn với `source` ở cuối.
+    """
+    if source is None:
+        raise ValueError("Bút toán phân bổ phải gắn với hồ sơ nguồn.")
+    plan = _plan_legs(legs, start, months)
+    with transaction.atomic():
+        others = _other_year_lines(plan, create=True)
+        locked = _lock([line.pk for line, _, _ in plan] + [o.pk for o in others.values()])
+        rows = [(locked[_target(line, period, others).pk], period, amt) for line, period, amt in plan]
+        shortfalls = _debit_shortfalls([(target, amt) for target, _, amt in rows])
+        if shortfalls:
+            raise InsufficientBudget(shortfalls)
+        entries = [_build(target, period, kind, amt, source=source, user=user) for target, period, amt in rows]
+        BudgetEntry.objects.bulk_create(entries)
+        audit.record(
+            "budget.entries_posted",
+            source,
+            actor=user,
+            changes={"kind": kind, "entries": [_entry_summary(e) for e in entries]},
+        )
+    return entries

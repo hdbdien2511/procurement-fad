@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "apps.workflow",
     "apps.notifications",
     "apps.requisitions",
+    "apps.budget_changes",
 ]
 
 MIDDLEWARE = [
