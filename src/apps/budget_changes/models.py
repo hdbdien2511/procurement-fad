@@ -33,12 +33,13 @@ STATUSES = [
 ]
 SUPPLEMENT, TRANSFER = "SUPPLEMENT", "TRANSFER"
 # Trạng thái làm tăng ngân sách (đã tăng, hoặc sẽ tăng nếu được duyệt) → tính vào luỹ kế ngoài ngân sách.
-CUMULATIVE_STATUSES = (APPROVED, IN_APPROVAL, BLOCKED)
+LIVE_STATUSES = (IN_APPROVAL, BLOCKED)
+CUMULATIVE_STATUSES = (APPROVED, *LIVE_STATUSES)
 KINDS = [(SUPPLEMENT, "Bổ sung ngân sách"), (TRANSFER, "Điều chuyển ngân sách")]
 COMPANY_SCOPE, UNIT_SCOPE = "COMPANY", "UNIT"
 
 # Trường hệ thống được ghi khi đề nghị đã rời trạng thái nháp (mọi trường khác bị khoá).
-SYSTEM_FIELDS = {"status", "number"}
+SYSTEM_FIELDS = {"status", "number", "submitted_at"}
 LOCKED_MESSAGE = "Đề nghị đã nộp, không được sửa nội dung"
 WHOLE_DONG_MESSAGE = "Số tiền đề nghị phải là số nguyên đồng"
 
@@ -77,6 +78,7 @@ class BudgetChangeRequest(models.Model):
         verbose_name="Đơn vị đề nghị",
     )  # lấy từ đơn vị của người đề nghị khi còn nháp (không cho chọn)
     status = models.CharField("Trạng thái", max_length=20, choices=STATUSES, default=DRAFT, editable=False)
+    submitted_at = models.DateTimeField("Nộp lúc", null=True, blank=True, editable=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+", verbose_name="Người tạo"
     )
@@ -155,9 +157,11 @@ class BudgetChangeRequest(models.Model):
     def cumulative_amount_vnd(self, scope: str) -> Decimal:
         """Luỹ kế ngoài ngân sách sau đề nghị này.
 
-        Tổng các đề nghị bổ sung **đã duyệt hoặc đang chạy** (đang duyệt, chờ ghi ngân sách) trong năm của
-        dòng nhận — toàn công ty, hoặc cùng đơn vị ngân sách khi `scope == "UNIT"` — cộng chính đề nghị này.
-        Tính cả đề nghị đang duyệt để không lách được hạn mức bằng cách chia nhỏ rồi nộp song song.
+        Tổng các đề nghị bổ sung **đã duyệt**, cộng các đề nghị **đang chạy** (đang duyệt, chờ ghi ngân sách)
+        được nộp trước đề nghị này, trong năm của dòng nhận — toàn công ty, hoặc cùng đơn vị ngân sách khi
+        `scope == "UNIT"` — cộng chính đề nghị này. Tính cả đề nghị đang duyệt để không lách được hạn mức
+        bằng cách chia nhỏ rồi nộp song song; chỉ tính các đề nghị nộp trước để thứ tự nộp quyết định cấp
+        duyệt (xem `_submitted_not_after`).
         Điều chuyển không làm tăng tổng ngân sách nên không tính luỹ kế (chỉ trả số của chính nó).
         """
         if self.kind == TRANSFER:
@@ -165,12 +169,29 @@ class BudgetChangeRequest(models.Model):
         if scope not in (COMPANY_SCOPE, UNIT_SCOPE):
             raise ValueError(f"Phạm vi luỹ kế không hợp lệ: {scope}")
         others = BudgetChangeRequest.objects.filter(
-            kind=SUPPLEMENT, status__in=CUMULATIVE_STATUSES, to_line__year=self.to_line.year
+            Q(status=APPROVED) | (Q(status__in=LIVE_STATUSES) & self._submitted_not_after()),
+            kind=SUPPLEMENT, to_line__year=self.to_line.year,
         ).exclude(pk=self.pk)
         if scope == UNIT_SCOPE:
             others = others.filter(to_line__budget_unit_id=self.to_line.budget_unit_id)
         total = others.aggregate(total=Sum("amount_vnd"))["total"] or Decimal(0)
         return total + self.amount_vnd
+
+    def _submitted_not_after(self) -> Q:
+        """Đề nghị đang chạy được nộp trước (hoặc cùng lúc, pk nhỏ hơn) đề nghị này.
+
+        Nhờ vậy luỹ kế ổn định theo thứ tự nộp: đề nghị nộp sau không làm đổi cấp duyệt của đề nghị nộp
+        trước khi hồ sơ đó duyệt xong. Chưa nộp (`submitted_at` trống) thì tính hết: ở thời điểm nộp, hồ
+        sơ này là mới nhất, nên "nộp trước hoặc cùng lúc" đúng bằng mọi hồ sơ đang chạy. Đề nghị đang chạy
+        mà không có mốc nộp cũng được tính (tính thừa về phía an toàn).
+        """
+        if self.submitted_at is None:
+            return Q()
+        return (
+            Q(submitted_at__isnull=True)
+            | Q(submitted_at__lt=self.submitted_at)
+            | Q(submitted_at=self.submitted_at, pk__lt=self.pk)
+        )
 
     def on_workflow_finished(self, status: str) -> None:
         from . import services

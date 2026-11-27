@@ -8,12 +8,12 @@ xem được.
 from django.db.models import Q
 
 from apps.workflow.models import BUDGET_CHANGE
-from apps.workflow.visibility import subject_visibility_filter
+from apps.workflow.visibility import ALL, subject_visibility_filter
 
 
 def _budget_owner_q(owner_units) -> Q | None:
     if None in owner_units:
-        return Q()  # phân công toàn công ty: mọi đề nghị đều gắn với dòng ngân sách
+        return ALL  # phân công toàn công ty: mọi đề nghị đều gắn với dòng ngân sách
     if not owner_units:
         return None
     return (

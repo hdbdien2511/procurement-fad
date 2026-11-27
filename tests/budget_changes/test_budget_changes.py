@@ -16,6 +16,7 @@ from apps.workflow import resolver
 from apps.workflow.engine import act
 from tests.factories import UserFactory
 from tests.requisitions.conftest import make_requisition
+from tests.workflow.conftest import grant
 
 SUPPLEMENT_REASON = "Phát sinh nhu cầu ngoài kế hoạch"
 
@@ -227,6 +228,22 @@ def test_split_supplements_count_in_flight_cumulative(db, org, budget, out_budge
     assert submit(second, org.requester).rule.label == "B"  # luỹ kế 210tr gồm cả đề nghị đang duyệt
 
 
+def test_split_requests_keep_their_submit_time_routing(db, org, budget, out_budget_policy, submit):
+    """Luỹ kế khi duyệt chỉ tính các đề nghị nộp trước đó: đề nghị nộp sau không làm hỏng cấp của đề nghị trước."""
+    requests = [make_change(org, budget.line, 45_000_000) for _ in range(5)]
+    labels = [submit(bcr, org.requester).rule.label for bcr in requests]
+    assert labels == ["A", "A", "A", "A", "B"]  # đến đề nghị thứ 5 thì luỹ kế 225tr ≥ 200tr
+
+    first = requests[0]
+    assert first.cumulative_amount_vnd("COMPANY") == Decimal("45000000")  # chỉ chính nó
+    approve_all(first)
+    assert first.status == "APPROVED"
+    assert entries_of(first) == [(budget.line.pk, date(2026, 1, 1), ADJUST, Decimal("45000000"))]
+
+    # đề nghị nộp sau vẫn tính cả đề nghị nộp trước (đã duyệt hoặc đang duyệt)
+    assert requests[4].cumulative_amount_vnd("COMPANY") == Decimal("225000000")
+
+
 def test_cumulative_grown_during_approval_blocks_without_posting(db, org, budget, adm_line, out_budget_policy,
                                                                    submit):
     """Luỹ kế vượt mức của cấp đã duyệt tại thời điểm duyệt xong → không ghi ngân sách, chờ trình lại."""
@@ -235,7 +252,9 @@ def test_cumulative_grown_during_approval_blocks_without_posting(db, org, budget
     make_change(org, budget.line, 150_000_000, status="APPROVED", number="NS-2026-09001")
     bcr = make_change(org, budget.line, 30_000_000)
     assert submit(bcr, org.requester).rule.label == "A"
-    make_change(org, adm_line, 40_000_000, status="APPROVED", number="NS-2026-09002")  # duyệt ở hồ sơ khác
+    other = make_change(org, adm_line, 40_000_000)  # còn nháp khi nộp bcr nên chưa tính vào luỹ kế
+    submit(other, org.requester)
+    approve_all(other)  # được duyệt xong trước bcr → luỹ kế của bcr tăng
 
     approve_all(bcr)
     assert bcr.status == "BLOCKED"
@@ -495,6 +514,12 @@ def test_visibility(db, org, budget, adm_line, out_budget_policy, submit):
     assert not submitted.visible_to(member_itd)
     assert draft.visible_to(org.owner_adm)
     assert not draft.visible_to(org.owner_itd)
+
+    owner_all = grant(UserFactory(username="owner_all"), R.BUDGET_OWNER)  # phân công toàn công ty
+    assert submitted.visible_to(owner_all) and draft.visible_to(owner_all)
+    assert set(BudgetChangeRequest.objects.visible_to(owner_all).values_list("pk", flat=True)) == {
+        submitted.pk, draft.pk
+    }
 
     for user in (org.requester, org.owner_itd, org.owner_adm, org.gddh, outsider, org.fad):
         listed = set(BudgetChangeRequest.objects.visible_to(user).values_list("pk", flat=True))

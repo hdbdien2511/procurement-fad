@@ -29,6 +29,9 @@ from .models import PENDING, Delegation, WorkflowTask
 
 COMPANY_WIDE_ROLES = (FAD_PRECHECK, FAD_BUDGET_ADMIN, AUDITOR)
 NOTHING = Q(pk__in=[])
+# `budget_owner_q` trả ALL khi phân công `BUDGET_OWNER` toàn công ty cho xem mọi hồ sơ của loại đó.
+# Không dùng `Q()` cho việc này: `q |= Q()` bị Django bỏ qua (giữ nguyên `q`), không phải "khớp mọi dòng".
+ALL = object()
 
 
 def assignments(user_ids) -> list[tuple[int, str, int | None]]:
@@ -70,7 +73,8 @@ def subject_visibility_filter(
     - `subject_kind`: mã loại hồ sơ dùng để lọc phạm vi uỷ quyền (`Delegation.subject_kinds`);
     - `amount_field`: trường số tiền của hồ sơ, so với hạn mức uỷ quyền;
     - `budget_owner_q(owner_units)`: điều kiện cho `BUDGET_OWNER` theo các đơn vị được phân công
-      (`None` trong danh sách = phân công toàn công ty), trả `None` nếu không mở thêm quyền xem nào.
+      (`None` trong danh sách = phân công toàn công ty), trả `None` nếu không mở thêm quyền xem nào, hoặc
+      `ALL` nếu được xem mọi hồ sơ của loại này.
     """
     if not user.is_authenticated or not user.is_active:
         return NOTHING
@@ -83,6 +87,8 @@ def subject_visibility_filter(
 
     own = assignments([user.pk])
     owner_q = budget_owner_q([unit for _, role, unit in own if role == BUDGET_OWNER])
+    if owner_q is ALL:
+        return None
     if owner_q is not None:
         q |= owner_q
 

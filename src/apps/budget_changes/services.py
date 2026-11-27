@@ -70,7 +70,7 @@ class SubmitBlocked(BudgetChangeError):
 
 # --- tiện ích ---------------------------------------------------------------------------------------
 
-_SYNC_FIELDS = ("number", "status", "start", "requester_unit_id")
+_SYNC_FIELDS = ("number", "status", "start", "requester_unit_id", "submitted_at")
 
 
 def _lock(bcr) -> BudgetChangeRequest:
@@ -153,7 +153,8 @@ def submit(bcr, user) -> WorkflowInstance:
         locked.number = next_number(NUMBER_PREFIX, timezone.localdate().year)
     locked.status = IN_APPROVAL
     locked.requester_unit_id = locked.requester.org_unit_id  # đơn vị người đề nghị tại ngày nộp
-    locked.save(update_fields=["number", "status", "requester_unit"])
+    locked.submitted_at = timezone.now()  # thứ tự nộp quyết định luỹ kế (xem `cumulative_amount_vnd`)
+    locked.save(update_fields=["number", "status", "requester_unit", "submitted_at"])
 
     instance = engine.start(locked, BUDGET_CHANGE, user)
     audit.record("budget_change.submitted", locked, actor=user, changes={

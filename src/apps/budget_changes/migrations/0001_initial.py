@@ -91,6 +91,12 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
+                    "submitted_at",
+                    models.DateTimeField(
+                        blank=True, editable=False, null=True, verbose_name="Nộp lúc"
+                    ),
+                ),
+                (
                     "created_at",
                     models.DateTimeField(
                         default=django.utils.timezone.now,
