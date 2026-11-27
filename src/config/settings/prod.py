@@ -1,3 +1,4 @@
+from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 
 from .base import *  # noqa: F401,F403
@@ -14,6 +15,10 @@ def _required(name):
 SECRET_KEY = _required("SECRET_KEY")
 ALLOWED_HOSTS = [h.strip() for h in _required("ALLOWED_HOSTS").split(",") if h.strip()]
 APP_ENCRYPTION_KEY = _required("APP_ENCRYPTION_KEY")
+try:
+    Fernet(APP_ENCRYPTION_KEY)
+except (ValueError, TypeError) as exc:
+    raise ImproperlyConfigured("APP_ENCRYPTION_KEY không phải khoá Fernet hợp lệ.") from exc
 _required("DATABASE_URL")  # base.py đọc giá trị này
 
 DEBUG = False

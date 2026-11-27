@@ -11,3 +11,6 @@ DATABASES = {
 ALLOWED_HOSTS = ["testserver", "localhost"]
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 AXES_ENABLED = False
+
+# Khoá Fernet cố định chỉ dùng cho kiểm thử (không phải bí mật).
+APP_ENCRYPTION_KEY = "1mpev1ghrQ6g_-Q8bTzrAbjwftD6uXDs3922QU1KYGY="

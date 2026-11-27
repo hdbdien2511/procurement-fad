@@ -2,6 +2,7 @@ import importlib
 import sys
 
 import pytest
+from cryptography.fernet import Fernet
 from django.db import connection
 
 
@@ -25,7 +26,7 @@ PROD_ENV = {
     "SECRET_KEY": "x" * 60,
     "ALLOWED_HOSTS": "procurement.example.vn",
     "DATABASE_URL": "postgres://u:p@localhost:5432/d",
-    "APP_ENCRYPTION_KEY": "k" * 44,
+    "APP_ENCRYPTION_KEY": Fernet.generate_key().decode(),
 }
 
 
@@ -62,3 +63,14 @@ def test_password_min_length_12(settings):
     opts = [v for v in settings.AUTH_PASSWORD_VALIDATORS if v["NAME"].endswith("MinimumLengthValidator")]
     assert opts and opts[0]["OPTIONS"]["min_length"] == 12
     assert settings.AUTH_USER_MODEL == "accounts.User"
+
+
+def test_prod_rejects_invalid_encryption_key(monkeypatch):
+    from django.core.exceptions import ImproperlyConfigured
+
+    for k, v in PROD_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("APP_ENCRYPTION_KEY", "k" * 44)
+    sys.modules.pop("config.settings.prod", None)
+    with pytest.raises(ImproperlyConfigured):
+        importlib.import_module("config.settings.prod")
