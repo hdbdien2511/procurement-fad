@@ -216,7 +216,7 @@ def test_sync_hris_deactivates_missing(db, fake_hris):
 def test_to_vnd_rounds_half_up(db):
     ExchangeRate.objects.create(currency="USD", date=date(2026,11,1), rate=Decimal("25460.5000"))
     vnd, rate = to_vnd(Decimal("1234.56"), "USD", date(2026,11,27))
-    assert rate == Decimal("25460.5000") and vnd == Decimal("31432580")  # 31.432.579,88 → 31.432.580
+    assert rate == Decimal("25460.5000") and vnd == Decimal("31432515")  # 31.432.514,88 → 31.432.515
 
 def test_missing_rate(db):
     with pytest.raises(MissingRate): to_vnd(Decimal("1"), "HKD", date(2026,1,1))
