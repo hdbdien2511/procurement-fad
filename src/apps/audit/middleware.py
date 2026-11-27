@@ -1,16 +1,28 @@
+import ipaddress
+
 from django.conf import settings
 
 from .context import audit_context
 
 
+def _valid_ip(value):
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
+
+
 def client_ip(request):
+    remote = _valid_ip(request.META.get("REMOTE_ADDR"))
     n = getattr(settings, "TRUSTED_PROXY_COUNT", 0)
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     if n > 0 and xff:
         parts = [p.strip() for p in xff.split(",") if p.strip()]
         if len(parts) >= n:
-            return parts[-n]
-    return request.META.get("REMOTE_ADDR") or None
+            candidate = _valid_ip(parts[-n])
+            if candidate:
+                return candidate
+    return remote
 
 
 class AuditContextMiddleware:
