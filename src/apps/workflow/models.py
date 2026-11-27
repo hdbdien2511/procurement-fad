@@ -69,7 +69,8 @@ TASK_STATUSES = [
 IN_USE_MESSAGE = "Chính sách đã được sử dụng; hãy tạo phiên bản mới"
 
 
-def _policies_in_use(policy_ids) -> bool:
+def policies_in_use(policy_ids) -> bool:
+    """Đã có hồ sơ luồng duyệt dùng một trong các chính sách này (dùng cả ở tầng quản trị)."""
     return WorkflowInstance.objects.filter(policy_id__in=policy_ids).exists()
 
 
@@ -79,7 +80,7 @@ class _ImmutableWhenUsedQuerySet(models.QuerySet):
     policy_path = None  # đường dẫn tới id chính sách, ví dụ "rule__policy_id"
 
     def _guard(self):
-        if _policies_in_use(self.values(self.policy_path)):
+        if policies_in_use(self.values(self.policy_path)):
             raise PermissionError(IN_USE_MESSAGE)
 
     def update(self, **kwargs):
@@ -112,7 +113,7 @@ class _ImmutableWhenUsed(models.Model):
 
     def _guard(self):
         policy_id = self._policy_id()
-        if policy_id is not None and _policies_in_use([policy_id]):
+        if policy_id is not None and policies_in_use([policy_id]):
             raise PermissionError(IN_USE_MESSAGE)
 
     def save(self, *args, **kwargs):

@@ -3,11 +3,10 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import render
-from openpyxl import load_workbook
 
 from apps.accounts.decorators import role_required
 from apps.accounts.roles import FAD_BUDGET_ADMIN
-from apps.core.imports import ImportReport
+from apps.core.imports import ImportReport, open_workbook
 from apps.core.services import get_setting
 from apps.ui.feedback import domain_errors
 from apps.ui.responses import xlsx_response
@@ -72,7 +71,7 @@ def vendor_import(request):
 
 
 def _read_rows(upload, report):
-    workbook = load_workbook(upload, read_only=True, data_only=True)
+    workbook = open_workbook(upload)
     try:
         rows = read_vendor_sheet(workbook, report)
     finally:

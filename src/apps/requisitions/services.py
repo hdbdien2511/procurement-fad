@@ -22,7 +22,7 @@ from apps.budget.models import BudgetLine
 from apps.core.fx import MissingRate
 from apps.core.money import format_vnd
 from apps.core.numbering import next_number
-from apps.documents import search
+from apps.documents import search, storage
 from apps.documents.models import QUOTE, Document
 from apps.notifications.outbox import notify
 from apps.workflow import engine, subject
@@ -299,6 +299,26 @@ def cancel(req, user, reason: str) -> None:
         "status": [old, CANCELLED], "reason": reason,
     })
     _sync(req, locked)
+
+
+# --- chứng từ -------------------------------------------------------------------------------------
+
+ATTACH_STATUSES = (DRAFT, RETURNED)
+ATTACH_NOT_OWNER = "Chỉ người lập hoặc người đề nghị được đính kèm chứng từ cho tờ trình"
+ATTACH_WRONG_STATUS = "Chỉ đính kèm chứng từ khi tờ trình ở trạng thái nháp hoặc bị trả lại"
+
+
+def attach_document(req, user, uploaded_file, doc_type: str) -> Document:
+    """Đính kèm chứng từ vào tờ trình.
+
+    Chứng từ lưu vĩnh viễn (không xoá được) và tham gia kiểm tra khi nộp / tiền kiểm, nên quyền ghi
+    hẹp hơn quyền xem: chỉ người lập hoặc người đề nghị, và chỉ khi tờ trình còn nháp hoặc bị trả lại.
+    """
+    if not _is_owner(req, user):
+        raise RequisitionError(ATTACH_NOT_OWNER)
+    if req.status not in ATTACH_STATUSES:
+        raise RequisitionError(ATTACH_WRONG_STATUS)
+    return storage.store_upload(uploaded_file, attach_to=req, doc_type=doc_type, user=user)
 
 
 # --- sửa lại / sao chép ----------------------------------------------------------------------------

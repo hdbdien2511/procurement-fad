@@ -14,7 +14,7 @@ from apps.requisitions.models import Requisition
 
 from . import search as doc_search
 from .models import Document
-from .permissions import can_view_object
+from .permissions import can_view_document
 from .storage import absolute_path
 
 INLINE_MIMES = {"application/pdf", "image/png", "image/jpeg"}
@@ -22,7 +22,7 @@ INLINE_MIMES = {"application/pdf", "image/png", "image/jpeg"}
 
 def _serve(request, pk, inline: bool):
     doc = get_object_or_404(Document, pk=pk)
-    if not can_view_object(request.user, doc.attached_to):
+    if not can_view_document(request.user, doc):
         return HttpResponseForbidden("Bạn không có quyền xem chứng từ này")
     path = absolute_path(doc.stored_path).resolve()
     if not path.is_relative_to(Path(settings.MEDIA_ROOT).resolve()) or not path.is_file():

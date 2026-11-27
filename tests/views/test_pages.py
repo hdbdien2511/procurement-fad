@@ -298,3 +298,120 @@ def test_budget_import_requires_file_and_pending(client, scene, budget):
     assert "Vui lòng chọn tệp Excel ngân sách" in body
     response = client.post("/ngan-sach/nhap-excel/", {"action": "confirm"}, follow=True)
     assert "Không còn tệp đang chờ" in response.content.decode()
+
+
+# --- sửa theo review ------------------------------------------------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def _png(name="bao-gia.png"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(name, PNG, content_type="image/png")
+
+
+def _doc_count(req):
+    from django.contrib.contenttypes.models import ContentType
+
+    from apps.documents.models import Document
+
+    return Document.objects.filter(
+        content_type=ContentType.objects.get_for_model(req), object_id=str(req.pk)
+    ).count()
+
+
+def test_requisition_upload_only_by_owner(client, scene, org, requester):
+    """Quyền xem tờ trình (FAD, Kiểm toán, cùng đơn vị, người duyệt) KHÔNG cho phép đính kèm chứng từ."""
+    req = scene.draft
+    colleague = UserFactory(username="dong_nghiep", org_unit=org.req_unit)  # cùng đơn vị đề nghị
+    auditor = grant(UserFactory(username="kiem_toan_2"), R.AUDITOR)
+    outsider = UserFactory(username="nguoi_ngoai_2", org_unit=org.dti)
+
+    for user, expected in ((outsider, 403), (auditor, 302), (colleague, 302)):
+        login(client, user)
+        response = client.post(f"/to-trinh/{req.pk}/chung-tu/", {"doc_type": "QUOTE", "file": _png()})
+        assert response.status_code == expected, user.username
+    assert _doc_count(req) == 0
+
+    login(client, colleague)
+    body = client.post(f"/to-trinh/{req.pk}/chung-tu/",
+                       {"doc_type": "QUOTE", "file": _png()}, follow=True).content.decode()
+    assert "Chỉ người lập hoặc người đề nghị được đính kèm chứng từ" in body
+
+
+def test_requisition_owner_can_upload_on_draft_only(client, scene, requester, approved_req):
+    login(client, requester)
+    response = client.post(f"/to-trinh/{scene.draft.pk}/chung-tu/",
+                           {"doc_type": "QUOTE", "file": _png()}, follow=True)
+    assert "Đã tải chứng từ lên" in response.content.decode()
+    assert _doc_count(scene.draft) == 1
+
+    body = client.post(f"/to-trinh/{approved_req.pk}/chung-tu/",
+                       {"doc_type": "QUOTE", "file": _png()}, follow=True).content.decode()
+    assert "Chỉ đính kèm chứng từ khi tờ trình ở trạng thái nháp hoặc bị trả lại" in body
+    assert _doc_count(approved_req) == 0
+
+
+def test_imports_reject_non_excel_file(client, scene, budget):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    login(client, budget.admin)
+    for url, extra in (("/nha-cung-cap/nhap-excel/", {}),
+                       ("/ngan-sach/nhap-excel/", {"budget_unit_code": "ITD", "year": "2026"})):
+        upload = SimpleUploadedFile("gia-mao.xlsx", b"khong phai excel")
+        response = client.post(url, {"file": upload, **extra})
+        assert response.status_code == 200, url
+        assert "Tệp không phải định dạng Excel (.xlsx) hợp lệ." in response.content.decode(), url
+
+
+def test_admin_refuses_change_to_used_policy(client, scene, org, in_budget_policy):
+    """Chính sách đã có hồ sơ dùng: trang quản trị hiện lỗi, không báo "thành công", không đổi gì."""
+    login(client, org.sysadmin)
+    url = f"/quan-tri/workflow/approvalpolicy/{in_budget_policy.pk}/change/"
+    response = client.post(url, {
+        "code": "DOI_MA", "subject_kind": in_budget_policy.subject_kind,
+        "version": str(in_budget_policy.version), "effective_from": "2026-01-01", "is_active": "on",
+    })
+    body = response.content.decode()
+    assert "Chính sách đã được sử dụng; hãy tạo phiên bản mới" in body
+    assert "thành công" not in body
+    in_budget_policy.refresh_from_db()
+    assert in_budget_policy.code == "TRONG_NGAN_SACH"
+
+
+def _create_delegation(client, delegate, *, start, end, letter=True):
+    data = {"delegate": str(delegate.pk), "start_date": start, "end_date": end}
+    if letter:
+        data["letter"] = _png("giay-uy-quyen.png")
+    return client.post("/uy-quyen/", data, follow=True)
+
+
+def test_failed_delegation_leaves_no_document(client, scene, org, requester):
+    from apps.documents.models import Document
+    from apps.workflow.models import Delegation
+
+    before = Document.objects.count()
+    login(client, requester)
+    body = _create_delegation(client, org.dept_head, start="2026-12-10", end="2026-12-01").content.decode()
+    assert "Ngày kết thúc phải từ ngày bắt đầu trở đi" in body
+    assert Document.objects.count() == before
+    assert not Delegation.objects.filter(delegator=requester, start_date="2026-12-10").exists()
+
+
+def test_delegation_letter_readable_by_both_parties_only(client, scene, org, requester):
+    from apps.workflow.models import Delegation
+
+    login(client, requester)
+    assert "Đã tạo uỷ quyền duyệt thay" in _create_delegation(
+        client, org.dept_head, start="2026-12-01", end="2026-12-10"
+    ).content.decode()
+    letter = Delegation.objects.filter(delegator=requester, start_date="2026-12-01").get().letter
+    assert letter is not None
+
+    url = f"/chung-tu/{letter.pk}/xem/"
+    for user in (requester, org.dept_head):
+        login(client, user)
+        assert client.get(url).status_code == 200, user.username
+    login(client, UserFactory(username="khong_lien_quan", org_unit=org.dti))
+    assert client.get(url).status_code == 403

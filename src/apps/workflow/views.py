@@ -180,25 +180,32 @@ def delegations(request):
 
 
 def _create_delegation(request) -> None:
+    """Tạo uỷ quyền kèm văn bản trong MỘT transaction: uỷ quyền không hợp lệ thì chứng từ cũng không còn.
+
+    Văn bản gắn vào người uỷ quyền (`Delegation.letter` phải có sẵn khi tạo và uỷ quyền là bất biến),
+    nên quyền xem của hai bên do `documents.permissions.can_view_document` mở riêng.
+    """
     post = request.POST
     with domain_errors(request, success="Đã tạo uỷ quyền duyệt thay."):
-        delegate = User.objects.filter(pk=post.get("delegate"), is_active=True).first()
-        if delegate is None:
-            raise ValueError("Vui lòng chọn người nhận uỷ quyền.")
-        letter = None
-        if request.FILES.get("letter"):
-            letter = store_upload(
-                request.FILES["letter"], attach_to=request.user, doc_type=DELEGATION_LETTER, user=request.user
+        with transaction.atomic():
+            delegate = User.objects.filter(pk=post.get("delegate"), is_active=True).first()
+            if delegate is None:
+                raise ValueError("Vui lòng chọn người nhận uỷ quyền.")
+            letter = None
+            if request.FILES.get("letter"):
+                letter = store_upload(
+                    request.FILES["letter"], attach_to=request.user, doc_type=DELEGATION_LETTER,
+                    user=request.user,
+                )
+            delegation_service.create_delegation(
+                request.user, delegate,
+                start_date=post.get("start_date") or timezone.localdate(),
+                end_date=post.get("end_date") or timezone.localdate(),
+                max_amount_vnd=post.get("max_amount_vnd") or None,
+                subject_kinds=post.getlist("subject_kinds"),
+                letter=letter,
+                actor=request.user,
             )
-        delegation_service.create_delegation(
-            request.user, delegate,
-            start_date=post.get("start_date") or timezone.localdate(),
-            end_date=post.get("end_date") or timezone.localdate(),
-            max_amount_vnd=post.get("max_amount_vnd") or None,
-            subject_kinds=post.getlist("subject_kinds"),
-            letter=letter,
-            actor=request.user,
-        )
 
 
 @login_required

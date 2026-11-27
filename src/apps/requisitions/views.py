@@ -15,7 +15,6 @@ from apps.accounts.decorators import role_required
 from apps.accounts.roles import FAD_BUDGET_ADMIN, FAD_PRECHECK, has_role
 from apps.budget import ledger
 from apps.documents.models import DOC_TYPES, OTHER, Document
-from apps.documents.storage import store_upload
 from apps.ui.feedback import domain_errors
 from apps.ui.responses import xlsx_response
 from apps.ui.tables import Column, TableSpec, apply_table
@@ -218,8 +217,8 @@ def requisition_upload(request, pk):
         upload = request.FILES.get("file")
         if upload is None:
             raise ValueError("Vui lòng chọn tệp cần tải lên.")
-        doc_type = request.POST.get("doc_type") or OTHER
-        store_upload(upload, attach_to=req, doc_type=doc_type, user=request.user)
+        # Quyền ghi do service quyết định (hẹp hơn quyền xem): người lập/đề nghị, nháp hoặc trả lại.
+        services.attach_document(req, request.user, upload, request.POST.get("doc_type") or OTHER)
     return redirect("requisition_detail", pk=pk)
 
 

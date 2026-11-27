@@ -1,7 +1,23 @@
-"""Báo cáo làm sạch dùng chung cho các bộ nhập Excel (ngân sách, nhà cung cấp)."""
+"""Báo cáo làm sạch và mở tệp dùng chung cho các bộ nhập Excel (ngân sách, nhà cung cấp)."""
 
+import zipfile
 from dataclasses import dataclass, field
 from decimal import Decimal
+
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+
+from apps.documents.storage import InvalidUpload
+
+NOT_XLSX = "Tệp không phải định dạng Excel (.xlsx) hợp lệ."
+
+
+def open_workbook(source):
+    """Mở sổ tính để đọc; tệp không phải .xlsx hoặc đã hỏng thì raise `InvalidUpload` (thông báo tiếng Việt)."""
+    try:
+        return load_workbook(source, read_only=True, data_only=True)
+    except (InvalidFileException, zipfile.BadZipFile, KeyError, ValueError) as exc:
+        raise InvalidUpload(NOT_XLSX) from exc
 
 
 @dataclass

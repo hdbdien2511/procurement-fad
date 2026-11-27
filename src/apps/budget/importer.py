@@ -11,13 +11,13 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
-from openpyxl import load_workbook
 
 from apps.accounts.models import OrgUnit
 from apps.audit import service as audit
 from apps.core.imports import (
     ImportIssue,
     ImportReport,
+    open_workbook,
 )
 from apps.core.money import round_vnd
 from apps.vendors import importer as vendor_importer
@@ -266,7 +266,7 @@ def import_budget_workbook(
     unit_code = budget_unit_code.strip()
     unit, org = _resolve_unit(unit_code, managing_org_unit_code, year, report)
 
-    wb = load_workbook(path, read_only=True, data_only=True)
+    wb = open_workbook(path)
     try:
         l8 = _read_l8(wb, year, report)
         l10 = _read_l10(wb, year, report)

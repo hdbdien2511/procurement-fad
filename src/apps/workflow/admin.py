@@ -7,17 +7,19 @@ của model hiện ra dưới dạng thông báo, không phải lỗi 500.
 
 from functools import update_wrapper
 
+from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import ValidationError
 from django.http import HttpResponseForbidden
 from django.utils import timezone
 
 from apps.accounts.decorators import FORBIDDEN
 from apps.accounts.roles import SYS_ADMIN, has_role
 
-from .models import IN_USE_MESSAGE, ApprovalPolicy, PolicyRule, RuleStep
+from .models import IN_USE_MESSAGE, ApprovalPolicy, PolicyRule, RuleStep, policies_in_use
 from .policies import set_policy_active
 
 
@@ -49,8 +51,21 @@ class PolicyAdminSite(AdminSite):
 site = PolicyAdminSite(name="quantri")
 
 
+class _InUseForm(forms.ModelForm):
+    """Chặn ngay ở bước kiểm tra form: chính sách đã dùng thì trang hiện lại kèm lỗi, không "lưu thành công"."""
+
+    def clean(self):
+        cleaned = super().clean()
+        policy_id = self.instance._policy_id() if self.instance.pk else None
+        if policy_id is not None and policies_in_use([policy_id]):
+            raise ValidationError(IN_USE_MESSAGE)
+        return cleaned
+
+
 class _NoDelete(admin.ModelAdmin):
-    """Chỉ đọc + thao tác có kiểm soát: không xoá, không thêm trực tiếp."""
+    """Chỉ đọc + thao tác có kiểm soát: không xoá, không thêm trực tiếp, không sửa bản đã dùng."""
+
+    form = _InUseForm
 
     def has_delete_permission(self, request, obj=None):
         return False
@@ -62,6 +77,7 @@ class _NoDelete(admin.ModelAdmin):
         messages.error(request, str(exc) or IN_USE_MESSAGE)
 
     def save_model(self, request, obj, form, change):
+        """Chốt cuối: model vẫn có thể từ chối (ví dụ hồ sơ vừa được nộp giữa hai lần kiểm tra)."""
         try:
             super().save_model(request, obj, form, change)
         except PermissionError as exc:

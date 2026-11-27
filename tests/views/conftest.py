@@ -12,7 +12,14 @@ from apps.workflow import delegation as delegation_service
 from apps.workflow import resolver
 from apps.workflow.engine import act
 from apps.workflow.models import FAD_PRECHECK as FAD_STEP_KIND
-from tests.requisitions.conftest import budget, frozen_today, make_requisition  # noqa: F401  (fixtures)
+from tests.requisitions.conftest import (  # noqa: F401  (fixtures)
+    approved_req,
+    budget,
+    frozen_today,
+    make_requisition,
+    ready_req,
+    submitted_req,
+)
 from tests.workflow.conftest import grant, in_budget_policy, org, past, requester  # noqa: F401  (fixtures)
 
 
