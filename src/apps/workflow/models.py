@@ -262,6 +262,7 @@ class WorkflowTask(models.Model):
     )
     mandatory = models.BooleanField("Bắt buộc chấp thuận")
     status = models.CharField("Trạng thái", max_length=20, choices=TASK_STATUSES, default=WAITING)
+    opened_at = models.DateTimeField("Thời điểm đến lượt", null=True, blank=True)
     due_at = models.DateTimeField("Hạn xử lý", null=True, blank=True)
     acted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"

@@ -10,8 +10,23 @@ from apps.accounts import roles as R
 from apps.audit.models import AuditEvent
 from apps.audit.service import verify_chain
 from apps.documents.models import MEETING_MINUTES, Document
-from apps.workflow.engine import AlreadyProcessed, NotAllowed, act, candidates, start
-from apps.workflow.models import ApprovalPolicy, PolicyRule, RuleStep, WorkflowTask
+from apps.workflow.engine import (
+    AlreadyProcessed,
+    Misconfigured,
+    NoApprover,
+    NotAllowed,
+    WorkflowError,
+    act,
+    candidates,
+    start,
+)
+from apps.workflow.models import (
+    ApprovalPolicy,
+    PolicyRule,
+    RuleStep,
+    WorkflowInstance,
+    WorkflowTask,
+)
 from tests.factories import UserFactory
 from tests.workflow.conftest import first_task, grant, task_of
 
@@ -121,8 +136,33 @@ def test_creator_cannot_approve_even_with_role(db, in_budget_policy, make_req, o
 
 
 def test_sys_admin_without_step_role_not_allowed(db, running_instance, org):
-    with pytest.raises(NotAllowed, match="Bạn không có quyền xử lý bước này"):
+    with pytest.raises(NotAllowed, match="Quản trị hệ thống không được duyệt nghiệp vụ"):
         act(first_task(running_instance), org.sysadmin, "APPROVE")
+
+
+def test_user_without_step_role_not_allowed(db, running_instance, org):
+    with pytest.raises(NotAllowed, match="Bạn không có quyền xử lý bước này"):
+        act(first_task(running_instance), org.gddh, "APPROVE")
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_sys_admin_with_business_role_not_allowed(db, in_budget_policy, make_req, org, scoped):
+    admin = grant(UserFactory(username="admin_gddh"), R.GDDH)
+    grant(admin, R.SYS_ADMIN, org.itd if scoped else None)
+    inst = start(make_req(3_000_000_000), "requisition", org.requester)
+    propose = task_of(inst, "PROPOSE")  # PROPOSE/GDDH/COMPANY
+    assert admin not in candidates(propose) and org.gddh in candidates(propose)
+    with pytest.raises(NotAllowed, match="Quản trị hệ thống không được duyệt nghiệp vụ"):
+        act(propose, admin, "APPROVE")
+    assert task_of(inst, "PROPOSE").status == "PENDING"
+
+
+def test_propose_not_auto_skipped_for_sys_admin_submitter(db, in_budget_policy, make_req, org):
+    admin = grant(UserFactory(username="admin_tp", org_unit=org.req_unit), R.DEPT_HEAD, org.req_unit)
+    grant(admin, R.SYS_ADMIN)
+    inst = start(make_req(500_000_000), "requisition", admin)
+    assert task_of(inst, "PROPOSE").status == "PENDING"
+    assert statuses(inst, "BUDGET_OWNER") == ["WAITING", "WAITING"]
 
 
 def test_wrong_unit_owner_not_allowed(db, running_instance, org):
@@ -231,16 +271,54 @@ def test_propose_pending_when_submitter_lacks_role(db, in_budget_policy, make_re
     assert statuses(inst, "BUDGET_OWNER") == ["PENDING", "PENDING"]
 
 
-def test_all_steps_skipped_approves_at_start(db, past, make_req, org):
+def _single_step_policy(past, **step):
     policy = ApprovalPolicy.objects.create(code="S", subject_kind="requisition", version=1, effective_from=past)
-    rule = PolicyRule.objects.create(policy=policy, priority=1, label="tự đề xuất")
-    RuleStep.objects.create(rule=rule, seq=1, kind="PROPOSE", role_code=R.REQUESTER, scope="REQUESTER_UNIT",
-                            mandatory=True, sla_hours=8)
+    rule = PolicyRule.objects.create(policy=policy, priority=1, label="một bước")
+    RuleStep.objects.create(rule=rule, seq=1, sla_hours=8, **step)
+    return policy
+
+
+def test_all_mandatory_steps_skipped_refuses_to_auto_approve(db, past, make_req, org):
+    _single_step_policy(past, kind="PROPOSE", role_code=R.REQUESTER, scope="REQUESTER_UNIT", mandatory=True)
     subject = make_req(1)
-    inst = start(subject, "requisition", org.requester)
+    with pytest.raises(NoApprover, match="không còn bước duyệt bắt buộc"):
+        start(subject, "requisition", org.requester)
     subject.refresh_from_db()
-    assert inst.status == "APPROVED" and subject.finished_status == "APPROVED"
-    assert subject_actions(subject)[-1] == "workflow.approved"
+    assert subject.finished_status == "" and not WorkflowInstance.objects.exists()
+    assert subject_actions(subject) == []
+
+
+def test_only_empty_mandatory_steps_refuses(db, past, make_req, org):
+    _single_step_policy(past, kind="BUDGET_OWNER", role_code=R.BUDGET_OWNER, scope="BUDGET_UNIT", mandatory=True)
+    with pytest.raises(NoApprover):
+        start(make_req(1, budget_units=[]), "requisition", org.requester)
+
+
+@pytest.mark.parametrize("step,make_kwargs,match", [
+    ({"kind": "CONSULT", "role_code": R.CONSULTANT, "scope": "FIXED_UNIT"}, {}, "đơn vị cố định"),
+    ({"kind": "BUDGET_OWNER", "role_code": R.BUDGET_OWNER, "scope": "BUDGET_UNIT"}, {"bad_bu": True},
+     "Không tìm thấy đơn vị quản lý ngân sách"),
+    ({"kind": "APPROVE", "role_code": R.DEPT_HEAD, "scope": "REQUESTER_UNIT"}, {"no_unit": True}, "chưa có đơn vị lập"),
+], ids=["fixed_unit_missing", "unknown_budget_unit", "no_requester_unit"])
+def test_misconfiguration_raises_workflow_error(db, past, make_req, org, step, make_kwargs, match):
+    _single_step_policy(past, mandatory=True, **step)
+    subject = make_req(1)
+    if make_kwargs.get("bad_bu"):
+        subject.budget_unit_ids = [999_999]
+    if make_kwargs.get("no_unit"):
+        subject.unit = None
+    subject.save()
+    with pytest.raises(Misconfigured, match=match) as exc:
+        start(subject, "requisition", org.requester)
+    assert isinstance(exc.value, WorkflowError)
+
+
+def test_opened_at_set_when_task_becomes_pending(db, running_instance, org):
+    assert all(t.opened_at is not None for t in running_instance.tasks.filter(status="PENDING"))
+    assert task_of(running_instance, "FAD_PRECHECK").opened_at is None
+    approve_budget_owners(running_instance, org)
+    fad = task_of(running_instance, "FAD_PRECHECK")
+    assert fad.opened_at is not None and fad.opened_at >= running_instance.started_at
 
 
 def test_double_act_sequential(db, running_instance, org):
@@ -353,6 +431,18 @@ def test_meeting_minutes_on_other_subject_do_not_count(db, in_budget_policy, mak
     act(task_of(inst, "FAD_PRECHECK"), org.fad, "APPROVE")
     with pytest.raises(NotAllowed, match="biên bản họp"):
         act(task_of(inst, "MEETING"), org.bms, "APPROVE")
+
+
+def test_meeting_minutes_uploaded_before_start_do_not_count(db, in_budget_policy, make_req, org):
+    subject = make_req(3_000_000_000, consult=False, budget_units=[])
+    attach_minutes(subject, org.bms)  # biên bản cũ, trước khi nộp
+    inst = start(subject, "requisition", org.requester)
+    act(task_of(inst, "PROPOSE"), org.gddh, "APPROVE")
+    act(task_of(inst, "FAD_PRECHECK"), org.fad, "APPROVE")
+    with pytest.raises(NotAllowed, match="biên bản họp"):
+        act(task_of(inst, "MEETING"), org.bms, "APPROVE")
+    attach_minutes(subject, org.bms)
+    act(task_of(inst, "MEETING"), org.bms, "APPROVE")
 
 
 # --- phiên bản chính sách ----------------------------------------------------------------------------

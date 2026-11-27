@@ -26,6 +26,15 @@ from apps.core.services import get_setting
 from apps.documents.models import DOC_TYPES, MEETING_MINUTES, Document
 
 from . import resolver
+from .exceptions import (  # noqa: F401  (re-export: engine.NotAllowed, ...)
+    AlreadyProcessed,
+    Misconfigured,
+    NoApprover,
+    NoMatchingRule,
+    NoPolicy,
+    NotAllowed,
+    WorkflowError,
+)
 from .models import (
     APPROVE,
     APPROVED,
@@ -51,26 +60,6 @@ _DONE = (APPROVED, SKIPPED)
 
 PROPOSE_SKIP_COMMENT = "Người lập có vai trò đề xuất"
 ADVISORY_EXPIRED_COMMENT = "Hết lượt góp ý"
-
-
-class WorkflowError(Exception):
-    pass
-
-
-class NoPolicy(WorkflowError):
-    pass
-
-
-class NoMatchingRule(WorkflowError):
-    pass
-
-
-class NotAllowed(WorkflowError):
-    pass
-
-
-class AlreadyProcessed(WorkflowError):
-    pass
 
 
 # --- chọn chính sách / quy tắc ----------------------------------------------------------------------
@@ -166,6 +155,8 @@ def _resolve_actor(task, user, on_behalf_of):
     """Điểm mở rộng cho duyệt thay (Task 11): trả về người có thẩm quyền mà `user` hành động thay.
 
     Ở bước này chưa hỗ trợ duyệt thay.
+    TODO(Task 11): khi có uỷ quyền, kiểm tra CẢ người nhận uỷ quyền (`user`) lẫn người uỷ quyền
+    (principal) với `resolver.barred_user_ids` và `resolver.sys_admin_ids`.
     """
     if on_behalf_of is not None:
         raise NotAllowed("Chưa hỗ trợ duyệt thay")
@@ -196,7 +187,8 @@ def _skip(task, comment, now):
 
 def _open(task, run):
     task.status = PENDING
-    task.save(update_fields=["status"])
+    task.opened_at = run.now
+    task.save(update_fields=["status", "opened_at"])
     if task.kind == PROPOSE and resolver.role_holders(task).filter(pk=run.instance.submitted_by_id).exists():
         _skip(task, PROPOSE_SKIP_COMMENT, run.now)
         run.event("workflow.task_skipped", task=task.pk, seq=task.seq, kind=task.kind, reason=PROPOSE_SKIP_COMMENT)
@@ -285,7 +277,8 @@ def start(subject, subject_kind: str, submitted_by) -> WorkflowInstance:
     run.event("workflow.started", policy=policy.code, version=policy.version, rule=rule.label,
               amount_vnd=snapshot["context"]["amount_vnd"])
     if _advance(run):
-        _finish(run, APPROVED, subject)
+        # không tự duyệt: mọi hồ sơ phải có ít nhất một bước bắt buộc do người xử lý
+        raise NoApprover("Chính sách không còn bước duyệt bắt buộc nào — kiểm tra cấu hình")
     _flush_audit(run, subject)
     return instance
 
@@ -296,7 +289,8 @@ def _check_required_document(instance, task):
     if doc_type is None:
         return
     exists = Document.objects.filter(
-        content_type_id=instance.content_type_id, object_id=instance.object_id, doc_type=doc_type
+        content_type_id=instance.content_type_id, object_id=instance.object_id, doc_type=doc_type,
+        uploaded_at__gte=instance.started_at,
     ).exists()
     if not exists:
         label = dict(DOC_TYPES).get(doc_type, doc_type)
@@ -333,6 +327,8 @@ def act(task, user, decision: str, comment: str = "", *, on_behalf_of=None) -> W
     principal = _resolve_actor(task, user, on_behalf_of)
     if user.pk in resolver.barred_user_ids(instance):
         raise NotAllowed("Không được duyệt hồ sơ do chính mình lập")
+    if user.pk in resolver.sys_admin_ids():
+        raise NotAllowed("Quản trị hệ thống không được duyệt nghiệp vụ")
     if not candidates(task).filter(pk=principal.pk).exists():
         raise NotAllowed("Bạn không có quyền xử lý bước này")
     comment = (comment or "").strip()
