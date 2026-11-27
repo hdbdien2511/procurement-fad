@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("", include("apps.accounts.urls")),
     path("", include("apps.documents.urls")),
+    path("", include("apps.notifications.urls")),
 ]
 
 if settings.OIDC_ENABLED:

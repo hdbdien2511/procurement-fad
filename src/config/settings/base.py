@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.budget",
     "apps.vendors",
     "apps.workflow",
+    "apps.notifications",
 ]
 
 MIDDLEWARE = [
@@ -161,3 +162,6 @@ CONTENT_SECURITY_POLICY = {
 
 APP_ENCRYPTION_KEY = env("APP_ENCRYPTION_KEY")
 TRUSTED_PROXY_COUNT = int(env("TRUSTED_PROXY_COUNT", "0"))
+
+# Worker: (đường dẫn dotted tới hàm nhận `now`, chu kỳ giây). Task 11 bổ sung job SLA.
+WORKER_PERIODIC_JOBS = [("apps.notifications.outbox.process_due", 30)]
