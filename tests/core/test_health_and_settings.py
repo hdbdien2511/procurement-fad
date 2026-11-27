@@ -27,6 +27,7 @@ PROD_ENV = {
     "ALLOWED_HOSTS": "procurement.example.vn",
     "DATABASE_URL": "postgres://u:p@localhost:5432/d",
     "APP_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+    "SITE_URL": "https://procurement.example.vn",
 }
 
 
@@ -45,6 +46,9 @@ def test_prod_security_flags(monkeypatch):
     assert prod.SECURE_HSTS_SECONDS >= 31536000
     assert prod.X_FRAME_OPTIONS == "DENY"
     assert prod.LANGUAGE_CODE == "vi" and prod.TIME_ZONE == "Asia/Ho_Chi_Minh"
+    assert prod.SITE_URL == "https://procurement.example.vn"
+    # /healthz phải trả lời trên HTTP nội bộ (healthcheck của container) chứ không bị chuyển sang HTTPS
+    assert r"^healthz$" in prod.SECURE_REDIRECT_EXEMPT
 
 
 @pytest.mark.parametrize("missing", list(PROD_ENV))

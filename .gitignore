@@ -16,3 +16,9 @@ staticfiles/
 
 # graphify local knowledge graph (generated, ~14MB)
 graphify-out/
+
+# Chứng chỉ TLS của máy chủ (không commit)
+deploy/certs/*.pem
+
+# Bản sao lưu do deploy/scripts/backup.sh tạo
+deploy/backups/

@@ -1,0 +1,107 @@
+# Bộ dịch vụ chạy hệ thống mua sắm trên một máy chủ nội bộ Ubuntu 26.04.
+# Biến môi trường đọc từ tệp `.env` cạnh tệp này (do `scripts/install.sh` sinh ra).
+# Mọi lệnh nên chạy qua scripts/ (install, upgrade, backup, restore) để dùng đúng tệp compose.
+name: procurement
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${DB_OWNER_USER}
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD}
+      # init.sql đọc hai biến này để tạo role runtime ở lần khởi tạo cụm dữ liệu đầu tiên.
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      POSTGRES_INITDB_ARGS: --data-checksums
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${DB_OWNER_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    shm_size: 256mb
+    mem_limit: 1g
+    cpus: 2.0
+
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: procurement-app:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media:/app/media
+      - static:/app/staticfiles
+    expose:
+      - "8000"
+    mem_limit: 1g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  worker:
+    # Cùng ảnh với `app` (khai lại build để `docker compose pull --ignore-buildable` bỏ qua dịch vụ này).
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: procurement-app:latest
+    restart: unless-stopped
+    command: ["python", "src/manage.py", "run_worker"]
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_started
+    volumes:
+      - media:/app/media
+    healthcheck:
+      disable: true
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      # Chỉ tệp tĩnh được phục vụ trực tiếp; MEDIA_ROOT (chứng từ) không bao giờ mount vào nginx.
+      - static:/usr/share/nginx/static:ro
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
+volumes:
+  pgdata:
+  media:
+  static:

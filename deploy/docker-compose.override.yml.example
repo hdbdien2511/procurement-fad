@@ -1,0 +1,24 @@
+# Bản ghi đè để THỬ NGHIỆM qua HTTP (không TLS) khi chưa có chứng chỉ.
+# KHÔNG dùng trên máy chủ thật: không có HTTPS thì mật khẩu và phiên đăng nhập đi trên mạng dạng rõ.
+#
+# Cách dùng:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   # thêm 127.0.0.1 vào ALLOWED_HOSTS và đặt SITE_URL=http://127.0.0.1:8000 trong .env
+#   ./scripts/install.sh --host 127.0.0.1
+#   curl http://127.0.0.1:8000/healthz
+#
+# Các script trong scripts/ tự nạp docker-compose.override.yml nếu tệp này tồn tại.
+# Xoá tệp override đi là quay về cấu hình HTTPS chuẩn.
+services:
+  app:
+    environment:
+      # Tắt chuyển hướng sang HTTPS (bình thường nginx mới là nơi kết thúc TLS).
+      SECURE_SSL_REDIRECT: "0"
+    ports:
+      # Chỉ mở trên loopback của máy chủ.
+      - "127.0.0.1:8000:8000"
+
+  nginx:
+    # Gắn profile để `docker compose up` không khởi động nginx (không có chứng chỉ nên nginx sẽ lỗi).
+    profiles:
+      - tls
