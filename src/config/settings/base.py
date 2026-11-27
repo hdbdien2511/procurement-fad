@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "csp",
     "apps.core",
     "apps.accounts",
+    "apps.audit",
 ]
 
 MIDDLEWARE = [
@@ -37,6 +38,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.audit.middleware.AuditContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
@@ -127,3 +129,4 @@ CONTENT_SECURITY_POLICY = {
 }
 
 APP_ENCRYPTION_KEY = env("APP_ENCRYPTION_KEY")
+TRUSTED_PROXY_COUNT = int(env("TRUSTED_PROXY_COUNT", "0"))
