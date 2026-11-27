@@ -1,0 +1,43 @@
+{% load vn %}
+<div class="table-wrap" id="table-{{ spec.key }}">
+<table class="data-table table-sticky">
+  <thead>
+    <tr>
+      {% if spec.selectable %}<th scope="col" class="col-select"><input type="checkbox" data-select-all aria-label="Chọn tất cả các dòng"></th>{% endif %}
+      {% for col in spec.columns %}
+      {% sort_state table col.key as state %}
+      <th scope="col"{% if col.sortable %} aria-sort="{{ state }}"{% endif %}{% if col.money %} class="num"{% endif %}>
+        {% if col.sortable %}{% next_sort table col.key as ns %}<a href="{% qs_with sort=ns page=None %}">{{ col.label }}{% if state == "ascending" %} <span aria-hidden="true">▲</span>{% elif state == "descending" %} <span aria-hidden="true">▼</span>{% endif %}</a>{% else %}{{ col.label }}{% endif %}
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in table.rows %}
+    <tr>
+      {% if spec.selectable %}<td class="col-select"><input type="checkbox" name="ids" value="{{ row.pk }}" aria-label="Chọn dòng {{ row.pk }}"></td>{% endif %}
+      {% for col in spec.columns %}<td{% if col.money %} class="num"{% endif %}>{% cell row col %}</td>{% endfor %}
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="{{ spec.columns|length|add:spec.selectable }}">Không có dữ liệu phù hợp</td></tr>
+    {% endfor %}
+  </tbody>
+  {% if table.totals and table.rows %}
+  <tfoot>
+    <tr class="totals-row">
+      {% if spec.selectable %}<td></td>{% endif %}
+      {% for col in spec.columns %}
+      <td{% if col.money %} class="num"{% endif %}>{% if forloop.first and not col.sum %}Tổng cộng{% elif col.sum %}{% with t=table.totals|get_item:col.key %}{% if col.money %}{{ t|vnd }}{% else %}{{ t }}{% endif %}{% endwith %}{% endif %}</td>
+      {% endfor %}
+    </tr>
+  </tfoot>
+  {% endif %}
+</table>
+</div>
+{% if table.page_obj.paginator.num_pages > 1 %}
+<nav class="pagination" aria-label="Phân trang">
+  <span>Trang {{ table.page_obj.number }}/{{ table.page_obj.paginator.num_pages }} · {{ table.page_obj.paginator.count }} dòng</span>
+  {% if table.page_obj.has_previous %}<a rel="prev" href="{% qs_with page=table.page_obj.previous_page_number %}">‹ Trước</a>{% endif %}
+  {% if table.page_obj.has_next %}<a rel="next" href="{% qs_with page=table.page_obj.next_page_number %}">Sau ›</a>{% endif %}
+</nav>
+{% endif %}

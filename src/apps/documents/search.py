@@ -1,9 +1,10 @@
 import re
-import unicodedata
 
 from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
 from django.db.models import F, Func, TextField, Value
 from django.db.models.functions import Concat
+
+from apps.core.text import strip_accents
 
 from .models import Document
 from .permissions import can_view_object
@@ -11,9 +12,7 @@ from .permissions import can_view_object
 
 def normalize(q: str) -> str:
     """Bỏ dấu tiếng Việt ở phía truy vấn (khớp với unaccent phía cơ sở dữ liệu)."""
-    q = q.replace("đ", "d").replace("Đ", "D")
-    q = unicodedata.normalize("NFD", q)
-    q = "".join(c for c in q if unicodedata.category(c) != "Mn")
+    q = strip_accents(q)
     # cùng quy tắc với phía chỉ mục: dấu câu thành khoảng trắng (tránh "ten.pdf" thành một từ)
     return re.sub(r"[\W_]+", " ", q)
 

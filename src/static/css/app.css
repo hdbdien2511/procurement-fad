@@ -1,0 +1,93 @@
+:root {
+  --bg: #f5f6f8;
+  --surface: #fff;
+  --text: #1c2430;
+  --muted: #5a6575;
+  --border: #d5dae1;
+  --primary: #1d4e89;
+  --primary-ink: #fff;
+  --header-bg: #14304f;
+  --accent-bg: #e8edf3;
+  --danger: #b3261e;
+  --focus: #e08a00;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 100%; }
+body { margin: 0; font: 0.9375rem/1.45 var(--font); color: var(--text); background: var(--bg); min-height: 100vh; display: flex; flex-direction: column; }
+a { color: var(--primary); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.skip-link { position: absolute; left: 0.5rem; top: -4rem; background: var(--surface); color: var(--text); padding: 0.5rem 0.75rem; z-index: 100; border: 2px solid var(--focus); }
+.skip-link:focus { top: 0.5rem; }
+
+.app-header { background: var(--header-bg); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 1rem; height: 3rem; position: sticky; top: 0; z-index: 20; }
+.app-header a, .app-header .link-button { color: #fff; }
+.app-name { font-weight: 700; font-size: 1.0625rem; text-decoration: none; }
+.header-actions { display: flex; align-items: center; gap: 1rem; }
+.header-actions .logout-form { margin: 0; }
+.link-button { background: none; border: 0; padding: 0; font: inherit; text-decoration: underline; cursor: pointer; }
+.badge { display: inline-block; min-width: 1.35rem; padding: 0 0.4rem; border-radius: 999px; background: #ffb300; color: #1c2430; font-size: 0.8125rem; font-weight: 700; text-align: center; }
+
+.app-body { flex: 1; display: flex; align-items: flex-start; min-width: 0; }
+.side-nav { width: 12.5rem; flex: none; background: var(--surface); border-right: 1px solid var(--border); align-self: stretch; padding: 0.5rem 0; }
+.side-nav ul { list-style: none; margin: 0; padding: 0; }
+.side-nav a { display: block; padding: 0.5rem 1rem; color: var(--text); text-decoration: none; border-left: 3px solid transparent; }
+.side-nav a:hover { background: var(--accent-bg); }
+.side-nav a[aria-current="page"] { border-left-color: var(--primary); background: var(--accent-bg); font-weight: 600; }
+main { flex: 1; min-width: 0; padding: 1rem 1.25rem; }
+main:focus { outline: none; }
+h1 { font-size: 1.375rem; margin: 0 0 0.75rem; }
+.app-footer { padding: 0.5rem 1rem; color: var(--muted); font-size: 0.8125rem; border-top: 1px solid var(--border); background: var(--surface); }
+
+.messages { list-style: none; margin: 0 0 1rem; padding: 0; }
+.message { padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-left-width: 4px; background: var(--surface); margin-bottom: 0.4rem; }
+.message.error { border-left-color: var(--danger); }
+.message.success { border-left-color: #1b7a3d; }
+.message.warning { border-left-color: #b26a00; }
+.message.info { border-left-color: var(--primary); }
+
+button, .button { font: inherit; padding: 0.35rem 0.8rem; border: 1px solid var(--primary); background: var(--primary); color: var(--primary-ink); border-radius: 3px; cursor: pointer; }
+input, select, textarea { font: inherit; padding: 0.3rem 0.5rem; border: 1px solid #8892a0; border-radius: 3px; background: #fff; color: var(--text); }
+
+/* Bảng dữ liệu dày đặc */
+.table-wrap { overflow: auto; max-height: calc(100vh - 11rem); background: var(--surface); border: 1px solid var(--border); }
+.data-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 0.875rem; }
+.data-table th, .data-table td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.data-table thead th { position: sticky; top: 0; z-index: 2; background: var(--accent-bg); white-space: nowrap; border-bottom: 2px solid #aab4c2; }
+.data-table th a { color: var(--text); text-decoration: none; }
+.data-table th a:hover { text-decoration: underline; }
+.data-table tbody tr:nth-child(even) { background: #fafbfc; }
+.data-table tbody tr:hover { background: #eef3f9; }
+.data-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.data-table .col-select { width: 2rem; text-align: center; }
+.data-table .empty { text-align: center; color: var(--muted); padding: 2rem 1rem; }
+.data-table tfoot td { position: sticky; bottom: 0; background: var(--accent-bg); font-weight: 700; border-top: 2px solid #aab4c2; }
+.pagination { display: flex; gap: 1rem; align-items: center; padding: 0.6rem 0; color: var(--muted); }
+
+/* Dưới 1024px: bảng cuộn ngang, thanh bên thu gọn thành dải trên */
+@media (max-width: 1023px) {
+  .app-body { flex-direction: column; }
+  .side-nav { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); align-self: auto; padding: 0; }
+  .side-nav ul { display: flex; overflow-x: auto; }
+  .side-nav a { white-space: nowrap; border-left: 0; border-bottom: 3px solid transparent; }
+  .side-nav a[aria-current="page"] { border-bottom-color: var(--primary); }
+  .app-body > main { width: 100%; }
+}
+
+/* In / lưu PDF qua trình duyệt */
+@media print {
+  .skip-link, .app-header, .side-nav, .app-footer, .pagination, .messages, button, .col-select { display: none !important; }
+  body { background: #fff; color: #000; font-size: 10pt; display: block; }
+  .app-body { display: block; }
+  main { padding: 0; }
+  .table-wrap { overflow: visible; max-height: none; border: 0; }
+  .data-table { font-size: 9pt; }
+  .data-table th, .data-table td { border: 1px solid #888; padding: 2px 4px; }
+  .data-table thead th, .data-table tfoot td { position: static; background: #eee !important; }
+  .data-table thead { display: table-header-group; }
+  .data-table tfoot { display: table-footer-group; }
+  .data-table tr { break-inside: avoid; }
+  a { color: #000; text-decoration: none; }
+  @page { size: A4 landscape; margin: 12mm; }
+}
