@@ -170,21 +170,17 @@ def _read_l10(wb, year, report):
     return projects
 
 
-def _amount(v, sheet, row, column, report):
-    """Chuyển ô tiền thành Decimal VND; None/trống = 0; không phải số thì ghi issue (trả None)."""
+def _parse_amount(v):
+    """Chuyển ô tiền thành Decimal VND; None/trống = 0; không phải số thì trả None."""
     if v is None or (isinstance(v, str) and not v.strip()):
         return Decimal(0)
-    if isinstance(v, bool) or isinstance(v, (datetime, date)):
-        d = None
-    else:
-        try:
-            d = Decimal(str(v).strip())
-        except InvalidOperation:
-            d = None
-    if d is None or not d.is_finite():
-        report.issues.append(ImportIssue(sheet, row, column, f"Giá trị '{v}' không phải số"))
+    if isinstance(v, (bool, datetime, date)):
         return None
-    return round_vnd(d)
+    try:
+        d = Decimal(str(v).strip())
+    except InvalidOperation:
+        return None
+    return round_vnd(d) if d.is_finite() else None
 
 
 def _read_budget_rows(wb, sheet, l8, l10, year, unit_code, report, entries, capex_codes):
@@ -193,6 +189,9 @@ def _read_budget_rows(wb, sheet, l8, l10, year, unit_code, report, entries, cape
         required.append("Group")
     rows = _read_sheet(wb, sheet, required, report)
     for n, r in rows or []:
+        parsed = {c: _parse_amount(r.get(c)) for c in ("Original", "Adjust")}
+        if all(v == 0 for v in parsed.values()):
+            continue  # dòng trống số tiền (kể cả dòng gần như trống): bỏ qua im lặng
         d = r.get("Date")
         if _text(d) == "":
             report.issues.append(ImportIssue(sheet, n, "Date", "Ngày trống"))
@@ -231,25 +230,27 @@ def _read_budget_rows(wb, sheet, l8, l10, year, unit_code, report, entries, cape
             )
             ok = False
 
-        amounts = {}
-        for column, kind in (("Original", ORIGINAL), ("Adjust", ADJUST)):
-            amt = _amount(r.get(column), sheet, n, column, report)
+        for column, amt in parsed.items():
             if amt is None:
+                report.issues.append(
+                    ImportIssue(sheet, n, column, f"Giá trị '{r.get(column)}' không phải số")
+                )
                 ok = False
-            elif kind == ORIGINAL and amt < 0:
-                report.issues.append(ImportIssue(sheet, n, column, "Kế hoạch gốc không được âm"))
-                ok = False
-            amounts[kind] = amt
         if not ok:
             continue
         ref = f"{sheet}!R{n}"
         note = _text(r.get("Note"))
-        for kind in (ORIGINAL, ADJUST):
-            if amounts[kind]:
-                entries.append(_Entry(
-                    ref, code, l10_code, loc, date(d.year, d.month, 1), kind, amounts[kind],
-                    f"{ref} — {note}" if note else ref,
-                ))
+        period = date(d.year, d.month, 1)  # ngày bất kỳ trong tháng -> ngày đầu tháng
+        orig, adj = parsed["Original"], parsed["Adjust"]
+        if orig > 0:
+            entries.append(_Entry(ref, code, l10_code, loc, period, ORIGINAL, orig,
+                                  f"{ref} — {note}" if note else ref))
+        elif orig < 0:  # FAD bù trừ: Original âm ghi như điều chỉnh
+            entries.append(_Entry(ref, code, l10_code, loc, period, ADJUST, orig,
+                                  f"{ref} (Original âm)" + (f" — {note}" if note else "")))
+        if adj:
+            entries.append(_Entry(ref, code, l10_code, loc, period, ADJUST, adj,
+                                  f"{ref} — {note}" if note else ref))
 
 
 def _resolve_unit(code, org_unit_code, year, report):
@@ -296,12 +297,30 @@ def import_budget_workbook(
     if report.issues:
         return report
 
-    # CostCode toàn cục (unique theo mã): không chiếm mã của đơn vị khác.
-    for code in {e.l8 for e in entries}:
-        other = CostCode.objects.filter(code=code).exclude(budget_unit=unit).first() if unit else None
-        if other is not None:
+    # CostCode/Project là duy nhất toàn hệ thống: không dùng lại dòng của đơn vị khác.
+    for cc in CostCode.objects.filter(code__in={e.l8 for e in entries}).select_related("budget_unit"):
+        if cc.budget_unit.code != unit_code:
             report.issues.append(ImportIssue(
-                SHEET_L8, 0, "L8_Code", f"Mã L8 '{code}' đã thuộc đơn vị ngân sách {other.budget_unit.code}"
+                SHEET_L8, 0, "L8_Code", f"Mã L8 '{cc.code}' đã thuộc đơn vị ngân sách {cc.budget_unit.code}"
+            ))
+    for pj in Project.objects.filter(code__in={e.l10 for e in entries}).select_related("budget_unit"):
+        if pj.budget_unit.code != unit_code:
+            report.issues.append(ImportIssue(
+                SHEET_L10, 0, "L10_Code", f"Mã dự án '{pj.code}' đã thuộc đơn vị ngân sách {pj.budget_unit.code}"
+            ))
+    # Ngân sách ròng (gốc + điều chỉnh) của từng dòng trong năm không được âm.
+    net: dict[tuple, Decimal] = {}
+    first_ref: dict[tuple, str] = {}
+    for e in entries:
+        key = (e.l8, e.l10, e.location)
+        net[key] = net.get(key, Decimal(0)) + e.amount
+        first_ref.setdefault(key, e.row_ref)
+    for key, total in net.items():
+        if total < 0:
+            sheet, row = first_ref[key].split("!R")
+            report.issues.append(ImportIssue(
+                sheet, int(row), "Original",
+                f"Ngân sách ròng năm {year} của {key[0]}/{key[1]}/{key[2]} bị âm ({total})",
             ))
     if report.issues:
         return report
@@ -319,6 +338,16 @@ def import_budget_workbook(
         return report
 
     with transaction.atomic():
+        if unit is not None:
+            # Khoá đơn vị rồi kiểm tra lại: chặn hai lần nhập đồng thời.
+            BudgetUnit.objects.select_for_update().get(pk=unit.pk)
+            if BudgetEntry.objects.filter(
+                line__budget_unit=unit, line__year=year, kind=ORIGINAL
+            ).exists():
+                report.issues.append(ImportIssue(
+                    "", 0, "", f"Ngân sách năm {year} của đơn vị {unit_code} đã được nhập"
+                ))
+                return report
         if unit is None:
             unit = BudgetUnit.objects.create(code=unit_code, name=unit_code, managing_org_unit=org)
         locations = {

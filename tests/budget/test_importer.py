@@ -177,7 +177,7 @@ def test_empty_amounts_skipped_and_other_year_counted(tmp_path, user, org):
     assert BudgetLine.objects.get().project.code == "BAU_DEMO"
 
 
-def test_negative_original_is_issue(tmp_path, user, org):
+def test_negative_original_alone_is_net_negative_issue(tmp_path, user, org):
     p = make_wb(tmp_path / "n.xlsx", [l8row("A_1")], [], [exprow("A_1", orig=-5)], [])
     r = run(p, user, org)
     assert not r.ok and r.issues[0].column == "Original"
@@ -232,3 +232,83 @@ def test_import_budget_command_reports_in_vietnamese(demo_xlsx, db, org, capsys)
     call_command("import_budget", str(demo_xlsx), "--unit", "DEMO", "--year", "2026", "--org-unit", org.code)
     out = capsys.readouterr().out
     assert "BÁO CÁO LÀM SẠCH" in out and "Chạy thử" in out and BudgetEntry.objects.count() == 0
+
+
+def _l8_main(code, m25, m26, items):
+    return [1, code, "n", None, items, m25, m26, None]
+
+
+def _one_row(tmp_path, l8):
+    return make_wb(tmp_path / "mi.xlsx", [l8], [], [exprow(l8[1])], [])
+
+
+def test_main_item_per_year_column(tmp_path, user, org):
+    p = _one_row(tmp_path, _l8_main("A_1", "01. Một", "02. Hai", "03. Ba"))
+    assert run(p, user, org).ok
+    assert CostCodeMainItem.objects.get(year=2026).main_item.code == "02"
+
+
+def test_main_item_falls_back_to_main_items(tmp_path, user, org):
+    p = _one_row(tmp_path, _l8_main("A_1", "01. Một", None, "03. Ba"))
+    assert run(p, user, org).ok
+    assert CostCodeMainItem.objects.get(year=2026).main_item.code == "03"
+
+
+def test_malformed_main_item_is_issue(tmp_path, user, org):
+    p = _one_row(tmp_path, _l8_main("A_1", "01. Một", "không số", "03. Ba"))
+    r = run(p, user, org)
+    assert not r.ok and ("L8_Code", "Main_2026") in {(i.sheet, i.column) for i in r.issues}
+
+
+def test_negative_original_becomes_adjust_when_net_not_negative(tmp_path, user, org):
+    p = make_wb(tmp_path / "o.xlsx", [l8row("A_1")], [],
+                [exprow("A_1", orig=-197926124), exprow("A_1", orig=197926124, note="bù")], [])
+    assert run(p, user, org).ok
+    es = list(BudgetEntry.objects.order_by("id"))
+    assert [(e.kind, e.amount) for e in es] == [(ADJUST, -197926124), (ORIGINAL, 197926124)]
+    assert "(Original âm)" in es[0].note and es[1].note.endswith("bù")
+
+
+def test_net_negative_line_is_issue(tmp_path, user, org):
+    p = make_wb(tmp_path / "o.xlsx", [l8row("A_1")], [], [exprow("A_1", orig=-5)], [])
+    r = run(p, user, org)
+    assert not r.ok and r.issues[0].column == "Original" and BudgetEntry.objects.count() == 0
+
+
+def test_near_blank_row_skipped_silently(tmp_path, user, org):
+    p = make_wb(tmp_path / "b.xlsx", [l8row("A_1")], [],
+                [[None, "A_1", None, None, None, None, None, None, None], exprow("A_1")], [])
+    r = run(p, user, org)
+    assert r.ok and BudgetEntry.objects.count() == 1
+
+
+def test_date_not_first_of_month_normalised(tmp_path, user, org):
+    p = make_wb(tmp_path / "d.xlsx", [l8row("A_1")], [], [exprow("A_1", d=datetime(2026, 11, 2))], [])
+    assert run(p, user, org).ok
+    assert BudgetEntry.objects.get().period == date(2026, 11, 1)
+
+
+def test_new_unit_cannot_reuse_other_units_codes(tmp_path, user, org):
+    other = BudgetUnit.objects.create(code="OTH", name="Khác", managing_org_unit=org)
+    cc = CostCode.objects.create(code="A_1", name="x", budget_unit=other)
+    Project.objects.create(code="P9", name="p", begin_year=2026, budget_unit=other)
+    p = make_wb(tmp_path / "c.xlsx", [l8row("A_1")], [["P9", "p", None, 2026, None, None]],
+                [exprow("A_1", l10="P9")], [])
+    r = run(p, user, org)
+    assert not r.ok and {i.column for i in r.issues} == {"L8_Code", "L10_Code"}
+    assert BudgetUnit.objects.count() == 1 and not BudgetEntry.objects.exists()
+    cc.refresh_from_db()
+    assert not cc.is_capex
+
+
+def test_failure_mid_write_rolls_back_everything(tmp_path, user, org, monkeypatch):
+    p = make_wb(tmp_path / "r.xlsx", [l8row("A_1")], [], [exprow("A_1")], [])
+
+    def boom(*a, **k):
+        raise RuntimeError("lỗi giả")
+
+    monkeypatch.setattr(BudgetEntry.objects, "bulk_create", boom)
+    with pytest.raises(RuntimeError):
+        run(p, user, org)
+    assert not BudgetUnit.objects.exists() and not CostCode.objects.exists()
+    assert not BudgetLine.objects.exists() and not AuditEvent.objects.filter(action="budget.imported").exists()
