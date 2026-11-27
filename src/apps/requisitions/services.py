@@ -25,8 +25,9 @@ from apps.core.numbering import next_number
 from apps.documents import search, storage
 from apps.documents.models import QUOTE, Document
 from apps.notifications.outbox import notify
-from apps.workflow import engine, subject
+from apps.workflow import delegation, engine, subject
 from apps.workflow.models import APPROVED as WF_APPROVED
+from apps.workflow.models import PENDING as WF_PENDING
 from apps.workflow.models import REJECTED as WF_REJECTED
 from apps.workflow.models import RETURNED as WF_RETURNED
 from apps.workflow.models import WorkflowInstance
@@ -304,20 +305,40 @@ def cancel(req, user, reason: str) -> None:
 # --- chứng từ -------------------------------------------------------------------------------------
 
 ATTACH_STATUSES = (DRAFT, RETURNED)
-ATTACH_NOT_OWNER = "Chỉ người lập hoặc người đề nghị được đính kèm chứng từ cho tờ trình"
+ATTACH_NOT_OWNER = (
+    "Chỉ người lập hoặc người đề nghị được đính kèm chứng từ cho tờ trình; khi hồ sơ đang duyệt thì "
+    "người đang xử lý bước duyệt cũng được đính kèm (ví dụ biên bản họp)"
+)
 ATTACH_WRONG_STATUS = "Chỉ đính kèm chứng từ khi tờ trình ở trạng thái nháp hoặc bị trả lại"
+
+
+def handles_pending_task(req, user) -> bool:
+    """`user` đang là người xử lý (trực tiếp hoặc theo uỷ quyền) của một bước đang chờ của tờ trình."""
+    for instance in _running_instances(req):
+        for task in instance.tasks.filter(status=WF_PENDING).order_by("seq", "pk"):
+            task.instance = instance
+            if engine.candidates(task).filter(pk=user.pk).exists():
+                return True
+            if delegation.can_act_on_behalf(user, task) is not None:
+                return True
+    return False
 
 
 def attach_document(req, user, uploaded_file, doc_type: str) -> Document:
     """Đính kèm chứng từ vào tờ trình.
 
     Chứng từ lưu vĩnh viễn (không xoá được) và tham gia kiểm tra khi nộp / tiền kiểm, nên quyền ghi
-    hẹp hơn quyền xem: chỉ người lập hoặc người đề nghị, và chỉ khi tờ trình còn nháp hoặc bị trả lại.
+    hẹp hơn quyền xem:
+
+    - người lập hoặc người đề nghị: khi tờ trình còn nháp hoặc bị trả lại;
+    - người đang xử lý một bước duyệt (kể cả duyệt thay): khi tờ trình đang duyệt — bước "Duyệt tại
+      cuộc họp" đòi biên bản họp đính kèm SAU khi hồ sơ đã nộp nên không ai khác làm được việc này.
     """
-    if not _is_owner(req, user):
+    if _is_owner(req, user):
+        if req.status not in ATTACH_STATUSES:
+            raise RequisitionError(ATTACH_WRONG_STATUS)
+    elif not (req.status == IN_APPROVAL and handles_pending_task(req, user)):
         raise RequisitionError(ATTACH_NOT_OWNER)
-    if req.status not in ATTACH_STATUSES:
-        raise RequisitionError(ATTACH_WRONG_STATUS)
     return storage.store_upload(uploaded_file, attach_to=req, doc_type=doc_type, user=user)
 
 

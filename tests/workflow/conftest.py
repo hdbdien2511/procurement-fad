@@ -6,9 +6,9 @@ from django.utils import timezone
 
 from apps.accounts import roles as R
 from apps.accounts.models import Role
+from apps.workflow.sample_policies import build_in_budget_policy, build_out_budget_policy
 from tests.factories import OrgUnitFactory, UserFactory
 from tests.testapp.models import Dummy
-from tests.workflow.policies import build_in_budget_policy, build_out_budget_policy
 
 
 def grant(user, role_code, org_unit=None):

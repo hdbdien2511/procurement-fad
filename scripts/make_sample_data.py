@@ -131,7 +131,9 @@ def _emp(code, username, name, org, title, roles):
     return {
         "employee_code": code, "username": username, "email": f"{username}@example.com",
         "full_name": name, "org_unit_code": org, "title": title, "entra_oid": None, "active": True,
-        # `roles`: gợi ý phân quyền cho kịch bản demo; sync_hris bỏ qua khoá này.
+        # `roles`: gợi ý phân quyền cho kịch bản demo (lệnh seed_demo đọc); sync_hris bỏ qua khoá này.
+        # `org_unit_code = None` = vai trò toàn công ty: bước duyệt phạm vi COMPANY (GĐĐH, TGĐ, thư ký
+        # BMS/HĐQT, FAD) chỉ nhận phân công toàn công ty, nên không gắn đơn vị cho các vai trò đó.
         "roles": [{"role": r, "org_unit_code": ou} for r, ou in roles],
     }
 
@@ -144,6 +146,7 @@ def hris_data() -> dict:
         {"code": "ITD-DEMO", "name": "Phòng CNTT Demo", "kind": "PHONG", "parent_code": "KHOI-DEMO"},
         {"code": "ADM-DEMO", "name": "Phòng Hành chính Demo", "kind": "PHONG", "parent_code": "KHOI-DEMO"},
         {"code": "FAD-DEMO", "name": "Phòng Tài chính Kế toán Demo", "kind": "PHONG", "parent_code": "KHOI-DEMO"},
+        {"code": "DTI-DEMO", "name": "Phòng Dữ liệu Demo", "kind": "PHONG", "parent_code": "KHOI-DEMO"},
     ]
     employees = [
         _emp("D001", "nv.mau1", "Nguyễn Văn Mẫu", "DEMO-A", "Chuyên viên", [("REQUESTER", "DEMO-A")]),
@@ -151,15 +154,17 @@ def hris_data() -> dict:
         _emp("D003", "pho.mau1", "Lê Văn Phó Giả", "DEMO-A", "Phó phòng", [("REQUESTER", "DEMO-A")]),
         _emp("D004", "nv.mau2", "Phạm Thị Ví Dụ", "DEMO-B", "Chuyên viên", [("REQUESTER", "DEMO-B")]),
         _emp("D005", "tp.mau2", "Hoàng Văn Kiểm Thử", "DEMO-B", "Trưởng phòng", [("DEPT_HEAD", "DEMO-B")]),
-        _emp("D006", "gddh.mau", "Vũ Thị Điều Hành Giả", "KHOI-DEMO", "Giám đốc điều hành", [("GDDH", "KHOI-DEMO")]),
-        _emp("D007", "gdnv.mau", "Đặng Văn Nghiệp Vụ Giả", "KHOI-DEMO", "Giám đốc nghiệp vụ", [("GDNV", "KHOI-DEMO")]),
+        _emp("D006", "gddh.mau", "Vũ Thị Điều Hành Giả", "KHOI-DEMO", "Giám đốc điều hành", [("GDDH", None)]),
+        _emp("D007", "gdnv.mau", "Đặng Văn Nghiệp Vụ Giả", "KHOI-DEMO", "Giám đốc nghiệp vụ", [("GDNV", None)]),
         _emp("D008", "bo.itd", "Bùi Thị Chủ Quản CNTT", "ITD-DEMO", "Trưởng phòng", [("BUDGET_OWNER", "ITD-DEMO"), ("DEPT_HEAD", "ITD-DEMO")]),
         _emp("D009", "bo.adm", "Ngô Văn Chủ Quản HC", "ADM-DEMO", "Trưởng phòng", [("BUDGET_OWNER", "ADM-DEMO"), ("DEPT_HEAD", "ADM-DEMO")]),
-        _emp("D010", "fad.tienkiem", "Đỗ Thị Tiền Kiểm", "FAD-DEMO", "Chuyên viên", [("FAD_PRECHECK", "FAD-DEMO")]),
-        _emp("D011", "fad.ngansach", "Dương Văn Ngân Sách", "FAD-DEMO", "Chuyên viên", [("FAD_BUDGET_ADMIN", "FAD-DEMO")]),
+        _emp("D010", "fad.tienkiem", "Đỗ Thị Tiền Kiểm", "FAD-DEMO", "Chuyên viên", [("FAD_PRECHECK", None)]),
+        _emp("D011", "fad.ngansach", "Dương Văn Ngân Sách", "FAD-DEMO", "Chuyên viên", [("FAD_BUDGET_ADMIN", None)]),
         _emp("D012", "thuky.bms", "Lý Thị Thư Ký BMS", "FAD-DEMO", "Thư ký BMS", [("BMS_SECRETARY", None)]),
         _emp("D013", "ceo.mau", "Mai Văn Tổng Giả", "KHOI-DEMO", "Tổng giám đốc", [("CEO", None)]),
         _emp("D014", "nv.itd", "Cao Thị Công Nghệ Giả", "ITD-DEMO", "Chuyên viên", [("REQUESTER", "ITD-DEMO")]),
+        _emp("D015", "tv.dti", "Trịnh Thị Tham Vấn Giả", "DTI-DEMO", "Chuyên viên", [("CONSULTANT", "DTI-DEMO")]),
+        _emp("D016", "thuky.hdqt", "Phan Văn Thư Ký HĐQT", "KHOI-DEMO", "Thư ký HĐQT", [("BOARD_SECRETARY", None)]),
     ]
     return {"org_units": org_units, "employees": employees}
 

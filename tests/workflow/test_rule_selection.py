@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from apps.workflow.engine import NoMatchingRule, NoPolicy, active_policy, select_rule
 from apps.workflow.models import ApprovalPolicy, PolicyRule
-from tests.workflow.policies import IN_BUDGET_RULES, build_policy
+from apps.workflow.sample_policies import IN_BUDGET_RULES, build_policy
 
 
 # chính sách mẫu "Trong ngân sách" (spec mục 4): rule1 max 199_999_999, rule2 max 2_000_000_000, rule3 không max

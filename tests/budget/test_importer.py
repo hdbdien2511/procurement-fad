@@ -212,7 +212,12 @@ def test_generator_is_deterministic_and_hris_valid(tmp_path):
     assert {u["code"] for u in data["org_units"]} >= {"DEMO-A", "DEMO-B", "ITD-DEMO", "ADM-DEMO", "FAD-DEMO"}
     assert all(e["email"].endswith("@example.com") for e in data["employees"])
     roles = {r["role"] for e in data["employees"] for r in e["roles"]}
-    assert roles >= {"REQUESTER", "DEPT_HEAD", "GDDH", "BUDGET_OWNER", "FAD_PRECHECK", "BMS_SECRETARY", "CEO"}
+    assert roles >= {"REQUESTER", "DEPT_HEAD", "GDDH", "BUDGET_OWNER", "FAD_PRECHECK", "BMS_SECRETARY", "CEO",
+                     "CONSULTANT", "BOARD_SECRETARY"}
+    # vai trò phạm vi toàn công ty phải không gắn đơn vị (bước duyệt COMPANY chỉ nhận phân công toàn công ty)
+    company_wide = {"GDDH", "CEO", "BMS_SECRETARY", "BOARD_SECRETARY", "FAD_PRECHECK", "FAD_BUDGET_ADMIN"}
+    assert all(r["org_unit_code"] is None
+               for e in data["employees"] for r in e["roles"] if r["role"] in company_wide)
     rows = lambda p: list(load_workbook(p).worksheets[2].iter_rows(values_only=True))  # noqa: E731
     assert rows(a / gen.WORKBOOK_NAME) == rows(b / gen.WORKBOOK_NAME)
 
@@ -223,7 +228,7 @@ def test_generated_hris_loads_with_sync(tmp_path, db):
 
     gen.main(["--out", str(tmp_path)])
     r = sync_hris(FakeHrisClient(tmp_path / gen.HRIS_NAME))
-    assert r.created == 6 + 14
+    assert r.created == len(gen.hris_data()["org_units"]) + len(gen.hris_data()["employees"])
 
 
 def test_import_budget_command_reports_in_vietnamese(demo_xlsx, db, org, capsys):

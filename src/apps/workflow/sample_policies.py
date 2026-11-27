@@ -1,7 +1,11 @@
-"""Dựng 2 chính sách duyệt mẫu theo bảng thẩm quyền spec mục 4 (dùng lại ở Task 16).
+"""Dựng 2 chính sách duyệt mẫu ("Trong ngân sách", "Ngoài ngân sách") theo bảng thẩm quyền spec mục 4.
 
-Cấu trúc bước (seq: kind/role/scope) bám đúng mô tả seed_demo của Task 16. Tham vấn
-`mandatory=False`, FAD tiền kiểm `mandatory=True`, SLA 48 giờ.
+Đây là ĐỊNH NGHĨA DUY NHẤT của bảng thẩm quyền mẫu: lệnh `seed_demo` và các kiểm thử luồng duyệt /
+ngân sách đều gọi vào đây, nên dữ liệu demo và dữ liệu kiểm thử không bao giờ lệch nhau.
+
+Cấu trúc bước (seq: kind/role/scope). Tham vấn `mandatory=False`, FAD tiền kiểm `mandatory=True`,
+SLA 48 giờ. Chính sách mẫu là DỮ LIỆU, không phải quy tắc viết cứng: người dùng sửa được trên màn
+hình quản trị chính sách (tạo phiên bản mới).
 """
 
 from datetime import date

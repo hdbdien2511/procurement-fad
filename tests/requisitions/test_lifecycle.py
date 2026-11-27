@@ -274,3 +274,32 @@ def test_requisition_number_unique_per_version(db, submitted_req):
             requester_unit=submitted_req.requester_unit, procurement_type="BAU", service_start=date(2026, 1, 1),
             created_by=submitted_req.requester,
         )
+
+
+# --- đính kèm chứng từ khi hồ sơ đang duyệt (biên bản họp) --------------------------------------------
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+
+
+def _png(name="bien-ban.png"):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    return SimpleUploadedFile(name, PNG, content_type="image/png")
+
+
+def test_pending_approver_can_attach_while_in_approval(db, submitted_req, org):
+    """Bước duyệt đòi chứng từ (biên bản họp) nên người đang xử lý bước phải đính kèm được."""
+    from apps.documents.models import MEETING_MINUTES
+    from apps.requisitions.services import attach_document
+
+    instance = submitted_req.workflow_instances().get()
+    task = instance.tasks.filter(status="PENDING", mandatory=True).order_by("seq", "pk").first()
+    task.instance = instance
+    approver = resolver.candidates(task).order_by("pk").first()
+
+    doc = attach_document(submitted_req, approver, _png(), MEETING_MINUTES)
+    assert doc.doc_type == MEETING_MINUTES and doc.uploaded_by == approver
+
+    outsider = UserFactory(username="nguoi_ngoai_dinh_kem", org_unit=org.dti)
+    with pytest.raises(RequisitionError, match="Chỉ người lập hoặc người đề nghị"):
+        attach_document(submitted_req, outsider, _png(), MEETING_MINUTES)

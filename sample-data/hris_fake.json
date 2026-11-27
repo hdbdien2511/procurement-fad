@@ -35,6 +35,12 @@
       "name": "Phòng Tài chính Kế toán Demo",
       "kind": "PHONG",
       "parent_code": "KHOI-DEMO"
+    },
+    {
+      "code": "DTI-DEMO",
+      "name": "Phòng Dữ liệu Demo",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
     }
   ],
   "employees": [
@@ -130,7 +136,7 @@
       "roles": [
         {
           "role": "GDDH",
-          "org_unit_code": "KHOI-DEMO"
+          "org_unit_code": null
         }
       ]
     },
@@ -146,7 +152,7 @@
       "roles": [
         {
           "role": "GDNV",
-          "org_unit_code": "KHOI-DEMO"
+          "org_unit_code": null
         }
       ]
     },
@@ -202,7 +208,7 @@
       "roles": [
         {
           "role": "FAD_PRECHECK",
-          "org_unit_code": "FAD-DEMO"
+          "org_unit_code": null
         }
       ]
     },
@@ -218,7 +224,7 @@
       "roles": [
         {
           "role": "FAD_BUDGET_ADMIN",
-          "org_unit_code": "FAD-DEMO"
+          "org_unit_code": null
         }
       ]
     },
@@ -267,6 +273,38 @@
         {
           "role": "REQUESTER",
           "org_unit_code": "ITD-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D015",
+      "username": "tv.dti",
+      "email": "tv.dti@example.com",
+      "full_name": "Trịnh Thị Tham Vấn Giả",
+      "org_unit_code": "DTI-DEMO",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "CONSULTANT",
+          "org_unit_code": "DTI-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D016",
+      "username": "thuky.hdqt",
+      "email": "thuky.hdqt@example.com",
+      "full_name": "Phan Văn Thư Ký HĐQT",
+      "org_unit_code": "KHOI-DEMO",
+      "title": "Thư ký HĐQT",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "BOARD_SECRETARY",
+          "org_unit_code": null
         }
       ]
     }

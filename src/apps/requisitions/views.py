@@ -156,7 +156,9 @@ def requisition_detail(request, pk):
                       or (is_budget_admin and req.status in (BUDGET_BLOCKED, APPROVED)),
         "can_retry_reserve": req.status == BUDGET_BLOCKED
                              and (is_budget_admin or has_role(request.user, FAD_PRECHECK)),
-        "can_upload": req.status in (DRAFT, RETURNED),
+        # Khi hồ sơ đang duyệt, người đang xử lý bước duyệt đính kèm được (ví dụ biên bản họp).
+        "can_upload": req.status in (DRAFT, RETURNED)
+                      or (req.status == IN_APPROVAL and services.handles_pending_task(req, request.user)),
     })
 
 
