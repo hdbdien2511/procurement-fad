@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from django.contrib.sessions.models import Session
 from django.db import transaction
 
 from apps.audit.service import diff, record
@@ -55,10 +56,17 @@ def _sync_org_units(client, report):
     return units
 
 
+def _drop_sessions(user):
+    for session in Session.objects.iterator():
+        if session.get_decoded().get("_auth_user_id") == str(user.pk):
+            session.delete()
+
+
 def _deactivate(user, report):
     user.is_active = False
     user.save(update_fields=["is_active"])
     record("user.deactivated", user, changes={"is_active": [True, False]})
+    _drop_sessions(user)
     report.deactivated += 1
 
 
@@ -108,6 +116,7 @@ def sync_hris(client) -> SyncReport:
         user.save()
         if was_active and not user.is_active:
             record("user.deactivated", user, changes={"is_active": [True, False]})
+            _drop_sessions(user)
             report.deactivated += 1
         else:
             record("user.updated", user, changes=changes)

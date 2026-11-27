@@ -62,3 +62,17 @@ def test_sync_does_not_touch_users_without_employee_code(db, user, fake_hris):
     sync_hris(fake_hris)
     user.refresh_from_db()
     assert user.is_active
+
+
+def test_deactivation_deletes_sessions(db, fake_hris, tmp_path, client):
+    from django.contrib.sessions.models import Session
+
+    sync_hris(fake_hris)
+    client.force_login(User.objects.get(employee_code="E002"))
+    assert Session.objects.count() == 1
+    data = json.loads(fake_hris_path(fake_hris))
+    data["employees"] = data["employees"][:1]
+    p = tmp_path / "h.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    sync_hris(FakeHrisClient(p))
+    assert Session.objects.count() == 0

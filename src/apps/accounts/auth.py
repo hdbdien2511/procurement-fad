@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth import BACKEND_SESSION_KEY, get_user_model
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.dispatch import receiver
@@ -8,6 +9,7 @@ from apps.audit.service import record
 AUTH_METHOD_KEY = "auth_method"
 AUTH_PASSWORD = "password"
 AUTH_OIDC = "oidc"
+ENTRA_BACKEND_PATH = "apps.accounts.auth.EntraOIDCBackend"
 
 
 class EntraOIDCBackend(OIDCAuthenticationBackend):
@@ -18,6 +20,25 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
         if not oid:
             return get_user_model().objects.none()
         return get_user_model().objects.filter(entra_oid=oid, is_active=True)
+
+    def get_user(self, user_id):
+        user = super().get_user(user_id)
+        if user is None or not self.user_can_authenticate(user):
+            return None
+        return user
+
+    def verify_claims(self, claims):
+        tenant = getattr(settings, "OIDC_OP_TENANT_ID", None)
+        client_id = getattr(settings, "OIDC_RP_CLIENT_ID", None)
+        if not tenant or not client_id or not claims.get("oid"):
+            return False
+        aud = claims.get("aud")
+        aud_ok = client_id in aud if isinstance(aud, (list, tuple)) else aud == client_id
+        return (
+            claims.get("iss") == f"https://login.microsoftonline.com/{tenant}/v2.0"
+            and aud_ok
+            and claims.get("tid") == tenant
+        )
 
     def get_userinfo(self, access_token, id_token, payload):
         # `oid` nằm trong id_token (đã xác minh), không chắc có trong userinfo của Graph
@@ -31,7 +52,7 @@ class EntraOIDCBackend(OIDCAuthenticationBackend):
 @receiver(user_logged_in)
 def _on_login(sender, request, user, **kwargs):
     backend = request.session.get(BACKEND_SESSION_KEY, "") if request is not None else ""
-    method = AUTH_OIDC if backend.endswith("EntraOIDCBackend") else AUTH_PASSWORD
+    method = AUTH_OIDC if backend == ENTRA_BACKEND_PATH else AUTH_PASSWORD
     if request is not None:
         request.session[AUTH_METHOD_KEY] = method
     record("auth.login", user, actor=user, changes={"method": method})

@@ -101,6 +101,7 @@ def oidc_settings(settings):
     settings.OIDC_OP_USER_ENDPOINT = "https://op.test/userinfo"
     settings.OIDC_OP_JWKS_ENDPOINT = "https://op.test/jwks"
     settings.OIDC_RP_SIGN_ALGO = "RS256"
+    settings.OIDC_OP_TENANT_ID = "tenant-1"
 
 
 @pytest.fixture
@@ -121,3 +122,46 @@ class TestEntraBackend:
 
     def test_never_creates_user(self, db, backend):
         assert backend.create_user({"oid": "x", "email": "a@b.c"}) is None
+
+    def test_get_user_rejects_inactive(self, db, backend):
+        u = UserFactory(entra_oid="o")
+        assert backend.get_user(u.pk) == u
+        u.is_active = False
+        u.save()
+        assert backend.get_user(u.pk) is None
+
+    def test_verify_claims(self, backend):
+        good = {
+            "iss": "https://login.microsoftonline.com/tenant-1/v2.0",
+            "aud": "id",
+            "tid": "tenant-1",
+            "oid": "o",
+        }
+        assert backend.verify_claims(good)
+        assert backend.verify_claims({**good, "aud": ["x", "id"]})
+        for bad in (
+            {**good, "iss": "https://login.microsoftonline.com/other/v2.0"},
+            {**good, "aud": "other"},
+            {**good, "tid": "other"},
+            {**good, "oid": ""},
+            {k: v for k, v in good.items() if k != "oid"},
+        ):
+            assert not backend.verify_claims(bad)
+
+
+def test_deactivated_oidc_user_loses_access(client, pw_user, oidc_settings, settings):
+    settings.AUTHENTICATION_BACKENDS = [*settings.AUTHENTICATION_BACKENDS, "apps.accounts.auth.EntraOIDCBackend"]
+    client.force_login(pw_user, backend="apps.accounts.auth.EntraOIDCBackend")
+    assert client.get("/").status_code == 200
+    pw_user.is_active = False
+    pw_user.save()
+    r = client.get("/")
+    assert r.status_code == 302 and r["Location"].startswith("/dang-nhap/")
+
+
+def test_auth_method_recorded_in_session(client, pw_user, password):
+    client.force_login(pw_user, backend="apps.accounts.auth.EntraOIDCBackend")
+    assert client.session["auth_method"] == "oidc"
+    client.post("/dang-xuat/")
+    client.post("/dang-nhap/", {"username": "bob", "password": password})
+    assert client.session["auth_method"] == "password"

@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.db import transaction
 from django.db.models import Q
 
 from apps.audit.service import record
@@ -73,6 +74,7 @@ def users_with_role(role_code, org_unit=None, on=None):
     return User.objects.filter(pk__in=ids, is_active=True)
 
 
+@transaction.atomic
 def assign(user, role_code, org_unit=None, valid_from=None, valid_to=None, actor=None):
     assignment = RoleAssignment.objects.create(
         user=user,

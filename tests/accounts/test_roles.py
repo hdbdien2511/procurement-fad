@@ -52,3 +52,17 @@ def test_users_with_role_scoped_and_inactive_excluded(db, user, unit_adm, unit_i
 def test_assign_is_audited(db, user, unit_adm):
     assign(user, DEPT_HEAD, unit_adm, valid_from=date(2026, 1, 1))
     assert AuditEvent.objects.filter(action="role.assigned").count() == 1
+
+
+def test_assign_is_atomic_with_audit(db, user, unit_adm, monkeypatch):
+    import pytest
+    from apps.accounts import roles
+    from apps.accounts.models import RoleAssignment
+
+    def boom(*a, **k):
+        raise RuntimeError("audit down")
+
+    monkeypatch.setattr(roles, "record", boom)
+    with pytest.raises(RuntimeError):
+        assign(user, DEPT_HEAD, unit_adm, valid_from=date(2026, 1, 1))
+    assert not RoleAssignment.objects.exists()
