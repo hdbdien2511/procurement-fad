@@ -9,6 +9,7 @@ urlpatterns = [
     path("healthz", healthz, name="healthz"),
     path("admin/", admin.site.urls),
     path("", include("apps.accounts.urls")),
+    path("", include("apps.documents.urls")),
 ]
 
 if settings.OIDC_ENABLED:

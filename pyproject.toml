@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-django", "factory-boy", "freezegun", "pip-audit", "bandit"]
+dev = ["pytest", "pytest-django", "factory-boy", "freezegun", "pip-audit", "bandit", "reportlab"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
     "django_htmx",
     "axes",
     "django_otp",
@@ -32,6 +33,7 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.audit",
     "apps.ui",
+    "apps.documents",
 ]
 
 MIDDLEWARE = [
