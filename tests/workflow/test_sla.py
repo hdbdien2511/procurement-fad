@@ -1,7 +1,7 @@
 """Thời hạn xử lý, nhắc hạn, quá hạn, chuyển cấp và thông báo khi mở bước / kết thúc hồ sơ."""
 
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
@@ -122,7 +122,16 @@ def test_notifications_rolled_back_with_failed_start(db, past, make_req, org):
 
 @pytest.fixture
 def frozen():
-    with freeze_time(timezone.now()) as f:
+    """Đóng băng đồng hồ vào 12:00 giờ địa phương của hôm nay (không phải đúng thời điểm chạy thật).
+
+    `freeze_time` lấy `date.today()` theo giờ UTC của thời điểm đóng băng. Đóng băng vào lúc chạy thật
+    quanh nửa đêm giờ địa phương thì "hôm nay" theo UTC lùi một ngày so với ngày mà các fixture khác đã
+    dùng khi tạo phân công vai trò (`roles.assign` dùng `date.today()`), nên bước duyệt không còn người
+    xử lý và kiểm thử sai theo giờ chạy. Giữa trưa giờ địa phương thì ngày UTC trùng ngày địa phương, nên
+    kiểm thử chạy được ở mọi giờ.
+    """
+    noon = datetime.combine(timezone.localdate(), time(12), tzinfo=timezone.get_current_timezone())
+    with freeze_time(noon) as f:
         yield f
 
 
