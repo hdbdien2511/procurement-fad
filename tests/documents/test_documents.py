@@ -157,6 +157,9 @@ def test_download_and_inline(client, owner, pdf_doc):
     assert b"".join(r.streaming_content).startswith(b"%PDF-")
     r = client.get(f"/chung-tu/{pdf_doc.pk}/xem/")
     b"".join(r.streaming_content)
+    assert r["Content-Security-Policy"] == "sandbox"
+    assert r["Cache-Control"] == "private, no-store"
+    assert r["X-Content-Type-Options"] == "nosniff"
     assert r["Content-Disposition"].startswith("inline")
     assert r["Content-Type"] == "application/pdf"
     assert AuditEvent.objects.filter(action="document.downloaded", object_id=str(pdf_doc.pk)).count() == 2
@@ -170,8 +173,9 @@ def test_inline_forces_attachment_for_office_files(client, owner, req):
     assert r["Content-Disposition"].startswith("attachment")
 
 
-def test_path_outside_media_root_is_404(client, owner, pdf_doc, settings):
-    (settings.MEDIA_ROOT.parent / "x").write_bytes(b"%PDF-secret")
+def test_path_outside_media_root_is_404(client, owner, pdf_doc, tmp_path):
+    # MEDIA_ROOT = tmp_path/"media"; "../x" nằm trong tmp_path (pytest tự dọn)
+    (tmp_path / "x").write_bytes(b"%PDF-secret")
     Document.objects.filter(pk=pdf_doc.pk).update(stored_path="../x")
     login(client, owner)
     assert client.get(f"/chung-tu/{pdf_doc.pk}/tai-ve/").status_code == 404
