@@ -303,3 +303,30 @@ def test_pending_approver_can_attach_while_in_approval(db, submitted_req, org):
     outsider = UserFactory(username="nguoi_ngoai_dinh_kem", org_unit=org.dti)
     with pytest.raises(RequisitionError, match="Chỉ người lập hoặc người đề nghị"):
         attach_document(submitted_req, outsider, _png(), MEETING_MINUTES)
+
+
+def test_viewer_not_on_current_step_cannot_attach(db, submitted_req, org):
+    """Quyền XEM hồ sơ không mở quyền đính kèm: phải đang xử lý bước ĐANG CHỜ.
+
+    `submitted_req` đang ở bước "Đơn vị quản lý ngân sách xác nhận"; `org.dept_head` (bước phê duyệt
+    cuối, còn "Chưa đến lượt") và `org.fad` (FAD tiền kiểm — xem được mọi hồ sơ) đều bị từ chối.
+    """
+    from apps.documents.models import MEETING_MINUTES
+    from apps.requisitions.services import attach_document
+
+    for user in (org.dept_head, org.fad):
+        assert submitted_req.visible_to(user), user.username
+        with pytest.raises(RequisitionError, match="Chỉ người lập hoặc người đề nghị"):
+            attach_document(submitted_req, user, _png(), MEETING_MINUTES)
+    assert not Document.objects.filter(object_id=str(submitted_req.pk)).exists()
+
+
+def test_approver_cannot_attach_after_workflow_finished(db, approved_req, org):
+    """Hồ sơ đã duyệt xong: không còn bước đang chờ nên người duyệt cũng không đính kèm được."""
+    from apps.documents.models import MEETING_MINUTES
+    from apps.requisitions.services import attach_document
+
+    for user in (org.dept_head, org.owner_itd, org.fad):
+        with pytest.raises(RequisitionError, match="Chỉ người lập hoặc người đề nghị"):
+            attach_document(approved_req, user, _png(), MEETING_MINUTES)
+    assert not Document.objects.filter(object_id=str(approved_req.pk)).exists()

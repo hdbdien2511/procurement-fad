@@ -15,7 +15,7 @@ dùng tự nghiệm thu.
 source .venv/bin/activate
 export DATABASE_URL=postgres://procurement:procurement@localhost:5432/procurement_demo
 python src/manage.py migrate
-python src/manage.py seed_demo          # chạy lại được; --reset để dựng lại chính sách/phân quyền
+python src/manage.py seed_demo          # chạy lại được; xem ghi chú về --confirm / --reset bên dưới
 python src/manage.py runserver
 ```
 
@@ -31,9 +31,14 @@ python src/manage.py runserver
   (tham vấn không bắt buộc, FAD tiền kiểm bắt buộc, SLA 48 giờ);
 - tỷ giá **USD = 25.460** (hiệu lực 01/01/2026) và 4 tham số hệ thống.
 
-Chạy lại `seed_demo` nhiều lần không nhân bản dữ liệu. `--reset` xoá phần xoá được (chính sách mẫu
-chưa dùng, phân quyền, uỷ quyền, tỷ giá, tham số) rồi dựng lại; **bút toán ngân sách, nhật ký audit
-và chứng từ lưu vĩnh viễn** (Ràng buộc chung) nên muốn làm lại hoàn toàn thì tạo lại cơ sở dữ liệu.
+`seed_demo` **từ chối chạy** nếu cơ sở dữ liệu đang có người dùng ngoài danh sách demo (chống chạy
+nhầm `DATABASE_URL` lên hệ thống thật: lệnh vô hiệu hoá nhân viên không có trong file giả và đặt mật
+khẩu demo). Khi chắc chắn đúng CSDL demo thì thêm cờ `--confirm`.
+
+Chạy lại `seed_demo` nhiều lần không nhân bản dữ liệu. `--reset` (đi kèm `--confirm`) xoá phần xoá
+được **chỉ của dữ liệu demo** (chính sách mẫu chưa dùng, phân quyền và uỷ quyền của các tài khoản
+demo, tỷ giá USD demo, 4 tham số) rồi dựng lại; **bút toán ngân sách, nhật ký audit và chứng từ lưu
+vĩnh viễn** (Ràng buộc chung) nên muốn làm lại hoàn toàn thì tạo lại cơ sở dữ liệu.
 
 ### Tài khoản demo
 
@@ -71,8 +76,9 @@ Tổng tờ trình: 100.000 USD × 25.460 = **2.546.000.000 đ** → quy tắc *
 | A3 | Dòng hàng: Mô tả "Máy chủ ảo hoá", Số lượng `1`, Đơn giá `100000`, VAT `0`. Phân bổ ngân sách: dòng 1 = `2026 · ITD · DM_9.1 · BAU_ITD · HSC` số tiền `1527600000`; dòng 2 = `2026 · ADM · ADM_2.1 · BAU_ADM · HSC` số tiền `1018400000`. Bấm "Lưu tờ trình nháp" | Mở trang chi tiết tờ trình, trạng thái **Nháp**; bảng "Phân bổ ngân sách và số dư khả dụng" hiện 2 dòng với số khả dụng 1.600.000.000 đ và 1.100.000.000 đ |  |
 | A4 | Mục "Chứng từ": tải lần lượt 3 tệp báo giá, Loại chứng từ = "Báo giá" | Mỗi lần có thông báo "Đã tải chứng từ lên"; danh sách chứng từ có 3 bản ghi |  |
 | A5 | Xem khối cảnh báo trước khi nộp | Không còn lỗi chặn nộp (đủ 03 báo giá, tổng phân bổ = tổng tờ trình 2.546.000.000 đ), nút "Nộp tờ trình" hiện ra |  |
-| A6 | Bấm "Nộp tờ trình" | Thông báo "Đã nộp tờ trình, luồng duyệt bắt đầu"; tờ trình có số `TT-2026-xxxxx`, trạng thái **Đang duyệt**; lịch sử duyệt hiện 5 bước, bước 1 "Đề nghị" đang chờ |  |
-| A7 | Vẫn là `nv.mau1`: mở "Việc chờ tôi" | **Không** có việc nào của tờ trình này (người lập không tự duyệt hồ sơ của mình — phân tách nhiệm vụ) |  |
+| A6 | Bấm "Nộp tờ trình" | Thông báo "Đã nộp tờ trình, luồng duyệt bắt đầu"; tờ trình có số `TT-2026-xxxxx`, trạng thái **Đang duyệt**; bảng "Lịch sử duyệt" hiện **6 dòng** (5 bước của quy tắc `>2ty`, trong đó bước "Đơn vị quản lý ngân sách xác nhận" tách thành 2 dòng cho 2 đơn vị), dòng bước 1 "Đề nghị" ở trạng thái **Chờ xử lý** |  |
+| A7 | Vẫn là `nv.mau1`: mở "Việc chờ tôi" | **Không** có việc nào của tờ trình này |  |
+| A7b | Lấy đường dẫn việc của bước "Đề nghị" (`/viec/<id>/`) từ email hoặc thông báo của `gddh.mau`, rồi mở chính đường dẫn đó khi đang đăng nhập `nv.mau1` → chọn "Chấp thuận" → "Ghi nhận" | Trang việc **mở được** (người lập có quyền xem hồ sơ của mình) nhưng thao tác bị từ chối với thông báo **"Không được duyệt hồ sơ do chính mình lập"** — bằng chứng phân tách nhiệm vụ |  |
 | A8 | Đăng nhập `gddh.mau` → Uỷ quyền → "Tạo uỷ quyền mới": người nhận `gdnv.mau`, Từ ngày = hôm nay, Đến ngày = hôm nay + 3 ngày, Loại hồ sơ "Tờ trình mua sắm", để trống hạn mức | Uỷ quyền xuất hiện ở "Uỷ quyền tôi đã cấp" |  |
 | A9 | Đăng nhập `gdnv.mau` → "Việc chờ tôi" → mở việc "Đề nghị" của `TT-2026-xxxxx` → chọn "Chấp thuận", nhập ý kiến → "Ghi nhận" | Ghi nhận thành công; lịch sử bước 1 ghi `gdnv.mau` **duyệt thay** `gddh.mau` (cột "Duyệt thay") |  |
 | A10 | Đăng nhập `bo.itd` → "Việc chờ tôi" | Có việc "Đơn vị quản lý ngân sách xác nhận" (nhánh Phòng CNTT Demo); `bo.adm` cũng có một việc tương tự (2 nhánh song song) |  |

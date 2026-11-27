@@ -10,6 +10,7 @@ Hai hành trình, cả hai đều dựng dữ liệu bằng chính lệnh `seed_
    → đề nghị được duyệt (ghi tăng ngân sách) → tờ trình nộp và duyệt được, giữ chỗ đúng.
 """
 
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 from io import StringIO
@@ -18,25 +19,31 @@ from types import SimpleNamespace
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 from freezegun import freeze_time
 
-from apps.accounts.models import OrgUnit, User
+from apps.accounts import roles as R
+from apps.accounts.models import OrgUnit, RoleAssignment, User
 from apps.audit.models import AuditEvent
 from apps.audit.service import verify_chain
 from apps.budget import ledger
 from apps.budget.ledger import InsufficientBudget
-from apps.budget.models import BudgetEntry, BudgetLine
+from apps.budget.models import RESERVE, BudgetEntry, BudgetLine
 from apps.budget_changes import models as bc_models
 from apps.budget_changes import services as bc_services
+from apps.core.management.commands import seed_demo
 from apps.core.management.commands.seed_demo import demo_lines
 from apps.core.models import ExchangeRate, Setting
 from apps.documents.models import MEETING_MINUTES, QUOTE
 from apps.notifications import outbox
 from apps.requisitions import services as req_services
 from apps.requisitions.models import APPROVED, Requisition, RequisitionFunding, RequisitionLine
-from apps.workflow import delegation, engine
+from apps.workflow import delegation, engine, resolver
 from apps.workflow.exceptions import NotAllowed
+from apps.workflow.models import ApprovalPolicy
+from tests.factories import UserFactory
+from tests.workflow.conftest import grant
 
 TODAY = "2026-11-27 10:00:00+07:00"  # ngày nộp: quyết định số hồ sơ và tỷ giá áp dụng
 SERVICE_START = date(2026, 12, 1)
@@ -133,8 +140,10 @@ def test_dot1_end_to_end(seeded, mailoutbox):
     assert req.total_vnd == TOTAL_VND and req.fx_rate == Decimal("25460.0000")
     assert instance.snapshot["rule"]["label"] == ">2ty"
 
-    # phân tách nhiệm vụ: người lập không tự duyệt bước đề nghị của hồ sơ mình
-    with pytest.raises(NotAllowed):
+    # phân tách nhiệm vụ: người lập không tự duyệt bước của hồ sơ mình (ở đây người lập cũng không
+    # giữ vai trò GĐĐH; trường hợp "giữ đúng vai trò của bước mà vẫn bị chặn" xem
+    # test_requester_holding_the_step_role_is_still_barred)
+    with pytest.raises(NotAllowed, match="do chính mình lập"):
         engine.act(task(instance, "PROPOSE"), seeded.requester, "APPROVE")
 
     # duyệt thay GĐĐH theo uỷ quyền 3 ngày
@@ -173,13 +182,59 @@ def test_dot1_end_to_end(seeded, mailoutbox):
     assert reserved == req.total_vnd == TOTAL_VND
     assert ledger.balance(line_itd).reserved == ITD_SHARE
 
+    # bút toán giữ chỗ gắn ĐÚNG tờ trình này (không phải bút toán của dữ liệu seed)
+    entries = BudgetEntry.objects.filter(
+        source_type=Requisition._meta.label_lower, source_id=str(req.pk), kind=RESERVE
+    )
+    assert {(e.line_id, e.period, e.amount) for e in entries} == {
+        (line_itd.pk, date(2026, 12, 1), ITD_SHARE), (line_adm.pk, date(2026, 12, 1), ADM_SHARE)
+    }
+
     assert verify_chain() == []
     assert {
         "requisition.submitted", "workflow.started", "workflow.task_acted", "workflow.approved",
         "budget.reserved", "requisition.status_changed",
     } <= req_audit_actions(req)
-    assert "budget.entry_posted" in set(AuditEvent.objects.values_list("action", flat=True))
+    # bản audit `budget.reserved` liệt kê đúng các bút toán giữ chỗ ở trên
+    reserved_event = AuditEvent.objects.get(
+        action="budget.reserved", object_type=Requisition._meta.label_lower, object_id=str(req.pk)
+    )
+    assert sorted(Decimal(c["amount"]) for c in reserved_event.changes["entries"]) == sorted(
+        [ADM_SHARE, ITD_SHARE]
+    )
     assert any("cần duyệt" in subject for subject in sent_subjects(mailoutbox))
+
+
+# --- phân tách nhiệm vụ: giữ đúng vai trò của bước mà vẫn không duyệt được hồ sơ của mình -------------
+
+def test_requester_holding_the_step_role_is_still_barred(seeded):
+    """Người đề nghị là Trưởng phòng Demo A — đúng vai trò của bước PROPOSE/DEPT_HEAD/REQUESTER_UNIT.
+
+    Chỉ còn quy tắc phân tách nhiệm vụ chặn họ, nên khẳng định dưới đây sẽ đỏ nếu quy tắc đó mất.
+    Người nộp là `nv.mau1` để bước đề nghị không bị bỏ qua (engine bỏ qua PROPOSE khi người nộp
+    chính là người giữ vai trò của bước).
+    """
+    line = seeded.lines["ADM"]
+    total = Decimal("500000000")  # nhóm 200tr–2 tỷ
+    req = make_requisition(seeded, currency="VND", unit_price=total, funding=[(line, total)],
+                           title="Tờ trình do Trưởng phòng đề nghị")
+    Requisition.objects.filter(pk=req.pk).update(requester=seeded.dept_head)
+    req.refresh_from_db()
+    for i in range(1, 4):
+        req_services.attach_document(req, seeded.requester, png(f"bao-gia-{i}.png"), QUOTE)
+
+    instance = req_services.submit(req, seeded.requester)  # nv.mau1 là người lập
+    assert instance.snapshot["rule"]["label"] == "200tr-2ty"
+    propose = task(instance, "PROPOSE")
+    assert propose.role_code == "DEPT_HEAD"
+    # Trưởng phòng Demo A đúng vai trò + phạm vi của bước...
+    assert resolver.role_holders(propose).filter(pk=seeded.dept_head.pk).exists()
+    # ...nhưng là người đề nghị nên bị loại khỏi danh sách người xử lý và bị từ chối.
+    assert not engine.candidates(propose).filter(pk=seeded.dept_head.pk).exists()
+    with pytest.raises(NotAllowed, match="do chính mình lập"):
+        engine.act(propose, seeded.dept_head, "APPROVE")
+    with pytest.raises(NotAllowed, match="do chính mình lập"):
+        engine.act(propose, seeded.requester, "APPROVE")
 
 
 # --- hành trình 2: tờ trình bị chặn vì thiếu ngân sách → bổ sung ngân sách → duyệt ---------------------
@@ -254,3 +309,51 @@ def test_seed_demo_is_idempotent_and_resets(seeded):
     assert after["policies"] == before["policies"] == 2
     assert after["roles"] == before["roles"] and after["rates"] == before["rates"]
     assert after["entries"] == before["entries"]  # bút toán ngân sách lưu vĩnh viễn
+
+
+# --- rào an toàn của lệnh seed_demo ------------------------------------------------------------------
+
+def _bad_feed(tmp_path, mutate):
+    """Bản copy của hris_fake.json đã bị sửa (để thử các trường hợp dữ liệu sai)."""
+    data = json.loads(seed_demo.HRIS_FILE.read_text(encoding="utf-8"))
+    mutate(data)
+    path = tmp_path / "hris_bad.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_unknown_org_unit_in_role_hint_fails_loudly(db, tmp_path, monkeypatch):
+    """Mã đơn vị sai KHÔNG được âm thầm thành phân công toàn công ty (leo thang quyền)."""
+    def mutate(data):
+        for employee in data["employees"]:
+            if employee["username"] == "bo.itd":
+                employee["roles"][0]["org_unit_code"] = "KHONG-TON-TAI"
+
+    monkeypatch.setattr(seed_demo, "HRIS_FILE", _bad_feed(tmp_path, mutate))
+    with pytest.raises(CommandError, match="không có đơn vị 'KHONG-TON-TAI'"):
+        call_command("seed_demo", stdout=StringIO(), stderr=StringIO())
+    assert RoleAssignment.objects.count() == 0  # transaction bị cuộn lại, không phân quyền nửa vời
+
+
+def test_refuses_database_with_non_demo_users_until_confirmed(db):
+    """Chạy nhầm DATABASE_URL: lệnh từ chối và không ghi gì (vì nó vô hiệu hoá nhân viên lạ)."""
+    real_user = UserFactory(username="nguoi.that", employee_code="X999")
+    with pytest.raises(CommandError, match="ngoài danh sách demo"):
+        call_command("seed_demo", stdout=StringIO(), stderr=StringIO())
+    real_user.refresh_from_db()
+    assert real_user.is_active and ApprovalPolicy.objects.count() == 0 and Setting.objects.count() == 0
+
+    call_command("seed_demo", "--confirm", stdout=StringIO(), stderr=StringIO())
+    assert ApprovalPolicy.objects.count() == 2
+
+
+def test_reset_only_touches_demo_data(seeded):
+    """`--reset` không chạm phân quyền / tỷ giá của người dùng ngoài danh sách demo."""
+    other = grant(UserFactory(username="nguoi.khac"), R.AUDITOR)
+    other_rate = ExchangeRate.objects.create(currency="USD", date=date(2026, 6, 1), rate=Decimal("26000"))
+
+    call_command("seed_demo", "--reset", "--confirm", stdout=StringIO(), stderr=StringIO())
+
+    assert RoleAssignment.objects.filter(user=other, role__code=R.AUDITOR).exists()
+    assert ExchangeRate.objects.filter(pk=other_rate.pk).exists()
+    assert ApprovalPolicy.objects.count() == 2

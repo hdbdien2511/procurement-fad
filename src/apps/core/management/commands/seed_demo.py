@@ -11,6 +11,9 @@ GIẢ sinh bằng `scripts/make_sample_data.py`):
 5. hai chính sách duyệt mẫu (`apps.workflow.sample_policies`);
 6. tỷ giá USD và 4 tham số hệ thống.
 
+Lệnh thay đổi diện rộng (xem `_check_target_database`) nên từ chối chạy khi cơ sở dữ liệu đã có
+người dùng ngoài danh sách demo, trừ khi có cờ `--confirm`.
+
 `--reset` chỉ xoá được phần dữ liệu cho phép xoá (chính sách chưa dùng, phân quyền, uỷ quyền, tỷ
 giá, tham số). Bút toán ngân sách, nhật ký audit và chứng từ lưu vĩnh viễn (Ràng buộc chung) nên
 muốn làm lại từ đầu thì tạo lại cơ sở dữ liệu.
@@ -22,10 +25,10 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction
+from django.db import connection, transaction
 
 from apps.accounts import roles as R
-from apps.accounts.models import Role, RoleAssignment, User
+from apps.accounts.models import OrgUnit, Role, RoleAssignment, User
 from apps.accounts.services import sync_hris
 from apps.budget.importer import import_budget_workbook
 from apps.budget.ledger import post
@@ -101,20 +104,53 @@ def _seed_user():
     return User.objects.filter(username="fad.ngansach").first()
 
 
-def _sync_hris(report):
+def _feed():
     if not HRIS_FILE.exists():
         raise CommandError(
             f"Không tìm thấy {HRIS_FILE}. Sinh lại bằng: python scripts/make_sample_data.py --out sample-data/"
         )
-    result = sync_hris(FakeHrisClient(HRIS_FILE))
+    return FakeHrisClient(HRIS_FILE)
+
+
+def demo_usernames() -> set[str]:
+    """Tên đăng nhập của người dùng demo (đúng danh sách trong hris_fake.json)."""
+    return {row["username"] for row in _feed().fetch_employees()}
+
+
+def _check_target_database(confirm: bool) -> None:
+    """Chặn chạy nhầm lên cơ sở dữ liệu thật.
+
+    Lệnh này thay đổi diện rộng: `sync_hris` vô hiệu hoá mọi nhân viên không có trong file giả (và
+    xoá phiên của họ), mật khẩu demo được công bố trong tài liệu. Vì vậy chỉ chạy khi CSDL chưa có
+    người dùng nào ngoài danh sách demo, hoặc người chạy khẳng định bằng `--confirm`.
+    """
+    if confirm:
+        return
+    others = (
+        User.objects.exclude(username__in=demo_usernames())
+        .exclude(is_superuser=True, employee_code__isnull=True)
+        .count()
+    )
+    if others:
+        raise CommandError(
+            f"Cơ sở dữ liệu đang có {others} người dùng ngoài danh sách demo "
+            f"({connection.settings_dict.get('NAME')}). Lệnh seed_demo thay đổi diện rộng "
+            "(vô hiệu hoá nhân viên không có trong file giả, đặt mật khẩu demo). "
+            "Kiểm tra lại DATABASE_URL; nếu đúng là CSDL demo thì chạy lại với --confirm."
+        )
+
+
+def _sync_hris(report):
+    result = sync_hris(_feed())
     report.append(
         f"HRIS: tạo mới {result.created}, cập nhật {result.updated}, vô hiệu hoá {result.deactivated}"
     )
 
 
 def _set_passwords(report):
+    """Đặt mật khẩu demo CHỈ cho người dùng trong file giả (không chạm người dùng khác)."""
     changed = 0
-    for user in User.objects.filter(employee_code__isnull=False):
+    for user in User.objects.filter(username__in=demo_usernames()):
         if not user.has_usable_password():
             user.set_password(DEMO_PASSWORD)
             user.save(update_fields=["password"])
@@ -124,21 +160,26 @@ def _set_passwords(report):
 
 def _grant_roles(report):
     """Phân quyền theo gợi ý `roles` trong hris_fake.json (bỏ qua phân công đã có)."""
-    data = FakeHrisClient(HRIS_FILE)
     granted = 0
-    for row in data.fetch_employees():
+    for row in _feed().fetch_employees():
         user = User.objects.filter(employee_code=row["employee_code"]).first()
         if user is None:
             continue
         for hint in row.get("roles") or []:
             code = hint["role"]
+            if code not in R.ROLE_NAMES:
+                raise CommandError(f"Gợi ý phân quyền của {row['username']}: vai trò '{code}' không tồn tại")
             Role.objects.get_or_create(code=code, defaults={"name": R.ROLE_NAMES[code]})
             org_code = hint.get("org_unit_code")
-            org_unit = user.org_unit if org_code and user.org_unit_id else None
-            if org_code and (org_unit is None or org_unit.code != org_code):
-                from apps.accounts.models import OrgUnit
-
+            # `org_unit=None` là vai trò TOÀN CÔNG TY: mã đơn vị sai không được âm thầm thành toàn công ty.
+            org_unit = None
+            if org_code:
                 org_unit = OrgUnit.objects.filter(code=org_code).first()
+                if org_unit is None:
+                    raise CommandError(
+                        f"Gợi ý phân quyền của {row['username']}: không có đơn vị '{org_code}' "
+                        f"(vai trò {code}). Sửa hris_fake.json rồi chạy lại."
+                    )
             if RoleAssignment.objects.filter(user=user, role__code=code, org_unit=org_unit).exists():
                 continue
             R.assign(user, code, org_unit, actor=user)
@@ -242,12 +283,13 @@ def _reset(report):
         report.append("Chính sách mẫu: đã có hồ sơ duyệt dùng tới, KHÔNG xoá được")
     else:
         report.append(f"Đã xoá {removed} đối tượng chính sách mẫu")
-    demo_users = User.objects.filter(employee_code__isnull=False)
+    demo_users = User.objects.filter(username__in=demo_usernames())
     report.append(f"Đã xoá {Delegation.objects.filter(delegator__in=demo_users).delete()[0]} uỷ quyền")
     report.append(
         f"Đã xoá {RoleAssignment.objects.filter(user__in=demo_users).delete()[0]} phân công vai trò"
     )
-    report.append(f"Đã xoá {ExchangeRate.objects.filter(currency='USD').delete()[0]} tỷ giá USD")
+    rates = ExchangeRate.objects.filter(currency="USD", date=date(YEAR, 1, 1), rate=USD_RATE)
+    report.append(f"Đã xoá {rates.delete()[0]} tỷ giá USD của dữ liệu demo")
     report.append(f"Đã xoá {Setting.objects.filter(key__in=SETTINGS).delete()[0]} tham số hệ thống")
     report.append(
         "Bút toán ngân sách, nhật ký audit và chứng từ lưu vĩnh viễn: muốn làm lại từ đầu thì tạo lại CSDL"
@@ -262,10 +304,15 @@ class Command(BaseCommand):
             "--reset", action="store_true",
             help="Xoá dữ liệu demo xoá được (chính sách mẫu, phân quyền, uỷ quyền, tỷ giá, tham số) rồi dựng lại",
         )
+        parser.add_argument(
+            "--confirm", action="store_true",
+            help="Khẳng định đây là CSDL demo (bắt buộc khi CSDL đã có người dùng ngoài danh sách demo)",
+        )
 
     @transaction.atomic
     def handle(self, *args, **opts):
         report: list[str] = []
+        _check_target_database(opts["confirm"])
         if opts["reset"]:
             _reset(report)
         _sync_hris(report)
