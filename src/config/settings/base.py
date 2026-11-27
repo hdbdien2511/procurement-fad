@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.documents",
     "apps.budget",
     "apps.vendors",
+    "apps.workflow",
 ]
 
 MIDDLEWARE = [
