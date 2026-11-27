@@ -7,6 +7,7 @@ class EmailSettingsForm(forms.ModelForm):
     password = forms.CharField(
         label="Mật khẩu",
         required=False,
+        strip=False,
         widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "new-password"}),
         help_text="Để trống để giữ nguyên mật khẩu hiện tại.",
     )

@@ -58,10 +58,13 @@ def email_send_test(request):
     if not to:
         messages.error(request, "Gửi thử không thành công: tài khoản của bạn chưa có địa chỉ email.")
         return redirect("email_settings")
+    cfg = EmailSettings.load()
+    password = ""
     try:
-        mailer.send_now([to], "[Mua sắm] Email thử nghiệm", "Đây là email thử nghiệm từ hệ thống mua sắm.")
+        password = cfg.get_password()
+        mailer.send_now([to], "[Mua sắm] Email thử nghiệm", "Đây là email thử nghiệm từ hệ thống mua sắm.", cfg=cfg)
     except Exception as exc:  # noqa: BLE001
-        messages.error(request, "Gửi thử không thành công: " + mailer.scrub(f"{type(exc).__name__}: {exc}"))
+        messages.error(request, "Gửi thử không thành công: " + mailer.safe_error(exc, password))
     else:
         messages.success(request, f"Đã gửi email thử tới {to}.")
     return redirect("email_settings")

@@ -6,6 +6,7 @@ from importlib import import_module
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.db import InterfaceError, OperationalError, close_old_connections
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -20,8 +21,12 @@ def _load(path):
 
 def run_job(path, now):
     """Chạy một job; lỗi chỉ được ghi log để không làm chết worker."""
+    close_old_connections()  # worker sống lâu: bỏ kết nối DB đã chết/quá hạn trước mỗi job
     try:
         _load(path)(now)
+    except (OperationalError, InterfaceError):
+        logger.exception("Job worker %s mất kết nối DB; thoát để container khởi động lại", path)
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("Job worker %s lỗi", path)
 

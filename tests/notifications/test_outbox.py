@@ -1,4 +1,6 @@
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
+from unittest import mock
 
 import pytest
 from apps.accounts.roles import SYS_ADMIN, assign
@@ -185,7 +187,7 @@ def test_notify_creates_notification_and_enqueues_email(db):
     assert n.title == "Có hồ sơ cần duyệt" and n.url == "/ho-so/1/" and n.read_at is None
     ob = Outbox.objects.get()
     assert ob.payload["to"] == ["u@x.test"] and ob.payload["template_code"] == "OFFICIAL"
-    assert ob.payload["context"]["ho_so"] == "HS-1" and ob.payload["context"]["duong_dan"] == "/ho-so/1/"
+    assert ob.payload["context"]["ho_so"] == "HS-1" and ob.payload["context"]["duong_dan"] == "http://localhost:8000/ho-so/1/"
 
 
 def test_notify_skips_email_without_address_or_template(db):
@@ -290,7 +292,14 @@ def test_send_test_mail_get_not_allowed(client, admin_user):
 
 # ---------- worker ----------
 
-def test_worker_once_runs_outbox_and_survives_failing_job(db):
+@pytest.fixture
+def no_close(monkeypatch):
+    m = mock.Mock()
+    monkeypatch.setattr("apps.notifications.management.commands.run_worker.close_old_connections", m)
+    return m
+
+
+def test_worker_once_runs_outbox_and_survives_failing_job(db, no_close):
     CALLS.clear()
     outbox.enqueue_email(["a@x.test"], "OFFICIAL", {"ho_so": "HS-1"})
     jobs = [
@@ -305,3 +314,140 @@ def test_worker_once_runs_outbox_and_survives_failing_job(db):
 
 def test_default_periodic_jobs_include_outbox(settings):
     assert ("apps.notifications.outbox.process_due", 30) in settings.WORKER_PERIODIC_JOBS
+
+
+def test_worker_closes_old_connections_before_each_job(db, no_close):
+    CALLS.clear()
+    jobs = [("tests.notifications.jobs.good_job", 30), ("tests.notifications.jobs.good_job", 30)]
+    with override_settings(WORKER_PERIODIC_JOBS=jobs):
+        call_command("run_worker", "--once")
+    assert no_close.call_count == 2
+
+
+def test_worker_exits_on_db_connection_error(db, no_close):
+    from django.db import OperationalError
+
+    with override_settings(WORKER_PERIODIC_JOBS=[("tests.notifications.jobs.db_down_job", 30)]):
+        with pytest.raises(OperationalError):
+            call_command("run_worker", "--once")
+
+
+# ---------- độ bền của outbox (review) ----------
+
+
+def test_one_failing_row_does_not_block_or_resend_others(db, monkeypatch):
+    real = mailer.send_now
+
+    def selective(to, subject, body, cfg=None):
+        if to == ["bad@x.test"]:
+            raise OSError("550 rejected")
+        return real(to, subject, body, cfg=cfg)
+
+    monkeypatch.setattr(mailer, "send_now", selective)
+    bad = outbox.enqueue_email(["bad@x.test"], "OFFICIAL", {"ho_so": "H1"})
+    good = outbox.enqueue_email(["good@x.test"], "OFFICIAL", {"ho_so": "H2"})
+    now = timezone.now()
+    assert outbox.process_due(now) == 1
+    bad.refresh_from_db()
+    good.refresh_from_db()
+    assert good.status == "SENT" and bad.attempts == 1 and bad.status == "PENDING"
+    assert "550" in bad.last_error and "OSError" in bad.last_error
+    assert [m.to for m in mail.outbox] == [["good@x.test"]]
+
+
+def test_record_failure_does_not_roll_back_other_rows(db, monkeypatch):
+    first = outbox.enqueue_email(["a@x.test"], "OFFICIAL", {"ho_so": "H1"})
+    second = outbox.enqueue_email(["b@x.test"], "OFFICIAL", {"ho_so": "H2"})
+    real = outbox._mark_sent
+
+    def flaky(ob, now):
+        if ob.pk == first.pk:
+            raise RuntimeError("DB lỗi khi ghi nhận")
+        return real(ob, now)
+
+    monkeypatch.setattr(outbox, "_mark_sent", flaky)
+    now = timezone.now()
+    assert outbox.process_due(now) == 1
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert second.status == "SENT"
+    assert first.status == "PENDING" and first.next_attempt_at > now  # còn được giữ chỗ, không gửi lại ngay
+    assert outbox.process_due(now) == 0
+    assert len(mail.outbox) == 2
+
+
+def test_claim_leases_row_outside_send(db, monkeypatch):
+    ob = outbox.enqueue_email(["a@x.test"], "OFFICIAL", {"ho_so": "H1"})
+    seen = {}
+
+    def spy(to, subject, body, cfg=None):
+        seen["lease"] = Outbox.objects.get(pk=ob.pk).next_attempt_at
+
+    monkeypatch.setattr(mailer, "send_now", spy)
+    now = timezone.now()
+    outbox.process_due(now)
+    assert seen["lease"] > now
+
+
+def test_error_scrubbed_with_password_used_for_that_send(db, monkeypatch):
+    s = EmailSettings.load()
+    s.host = "smtp.test"
+    s.set_password(PASSWORD)
+    s.save()
+
+    def rotate_then_fail(to, subject, body, cfg=None):
+        new = EmailSettings.load()
+        new.set_password("Mat-khau-moi-123")
+        new.save()
+        raise OSError(f"login failed using {PASSWORD}")
+
+    monkeypatch.setattr(mailer, "send_now", rotate_then_fail)
+    ob = outbox.enqueue_email(["a@x.test"], "OFFICIAL", {"ho_so": "H1"})
+    outbox.process_due(timezone.now())
+    ob.refresh_from_db()
+    assert PASSWORD not in ob.last_error and "***" in ob.last_error
+
+
+def test_safe_error_whitelist_and_truncation():
+    class SmtpErr(Exception):
+        smtp_code = 535
+
+    text = mailer.safe_error(SmtpErr("x" * 1000), "pw")
+    assert text.startswith("SmtpErr [535]: ") and len(text) < 330
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend")
+def test_not_configured_keeps_pending_without_attempts(db):
+    a = outbox.enqueue_email(["a@x.test"], "OFFICIAL", {"ho_so": "H1"})
+    b = outbox.enqueue_email(["b@x.test"], "OFFICIAL", {"ho_so": "H2"})
+    now = timezone.now()
+    assert outbox.process_due(now) == 0
+    for ob in (a, b):
+        ob.refresh_from_db()
+        assert ob.status == "PENDING" and ob.attempts == 0
+        assert ob.next_attempt_at == now + timedelta(minutes=10)
+
+
+def test_payload_accepts_decimal_and_date(db):
+    ob = outbox.enqueue_email(
+        ["a@x.test"], "OFFICIAL", {"ho_so": "H1", "han_xu_ly": date(2026, 12, 1), "tien": Decimal("1500000")}
+    )
+    ob.refresh_from_db()
+    assert ob.payload["context"]["han_xu_ly"] == "2026-12-01"
+    assert outbox.process_due(timezone.now()) == 1
+    assert "2026-12-01" in mail.outbox[0].body
+
+
+def test_link_is_absolute_and_query_string_not_escaped(db):
+    u = UserFactory(email="u@x.test")
+    outbox.notify(u, "t", "/ho-so/1/?a=1&b=2", email_template="OFFICIAL", context={"ho_so": "H"})
+    assert Notification.objects.get().url == "/ho-so/1/?a=1&b=2"
+    outbox.process_due(timezone.now())
+    body = mail.outbox[0].body
+    assert "http://localhost:8000/ho-so/1/?a=1&b=2" in body and "&amp;" not in body
+
+
+def test_password_field_not_stripped():
+    from apps.notifications.forms import EmailSettingsForm
+
+    assert EmailSettingsForm().fields["password"].strip is False

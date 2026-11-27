@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from django.utils import timezone
 
@@ -61,7 +62,7 @@ class Outbox(models.Model):
         FAILED = "FAILED", "Thất bại"
 
     kind = models.CharField(max_length=20, default="EMAIL")
-    payload = models.JSONField()
+    payload = models.JSONField(encoder=DjangoJSONEncoder)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     attempts = models.PositiveSmallIntegerField(default=0)
     next_attempt_at = models.DateTimeField(default=timezone.now)
