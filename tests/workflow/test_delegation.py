@@ -1,5 +1,6 @@
 """Uỷ quyền duyệt thay (spec 7.2)."""
 
+import threading
 from datetime import timedelta
 from decimal import Decimal
 
@@ -250,3 +251,50 @@ def test_unknown_subject_kind_rejected(db, org, deputy, today):
 def test_letter_must_be_delegation_letter(db, org, deputy, today):
     with pytest.raises(ValidationError, match="Giấy ủy quyền"):
         delegate(org.owner_itd, deputy, today, letter=letter(org.owner_itd, QUOTE))
+
+
+# --- bất biến và khoá -----------------------------------------------------------------------------
+
+def test_delegation_immutable_except_revoke(db, org, deputy, today):
+    d = delegate(org.owner_itd, deputy, today, max_amount_vnd=Decimal(1))
+    msg = "Uỷ quyền đã tạo không được sửa"
+    d.max_amount_vnd = None
+    with pytest.raises(PermissionError, match=msg):
+        d.save()
+    with pytest.raises(PermissionError, match=msg):
+        d.save(update_fields=["max_amount_vnd", "revoked_at"])
+    with pytest.raises(PermissionError, match=msg):
+        Delegation.objects.filter(pk=d.pk).update(end_date=today + timedelta(days=365))
+    d.refresh_from_db()
+    assert d.max_amount_vnd == Decimal(1)
+    d.revoke(org.owner_itd)
+    assert Delegation.objects.get(pk=d.pk).revoked_at is not None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_act_locks_delegation_row(running_instance, org):
+    """Trong `act`, dòng uỷ quyền bị khoá tới hết transaction → thu hồi đồng thời phải chờ."""
+    from django.db import OperationalError, connection, transaction
+
+    today = timezone.localdate()
+    deputy = UserFactory(username="deputy2")
+    d = delegate(org.owner_itd, deputy, today)
+    task = task_of(running_instance, "BUDGET_OWNER", org_unit=org.itd)
+    seen = []
+
+    def try_lock():
+        try:
+            with transaction.atomic():
+                Delegation.objects.select_for_update(nowait=True).get(pk=d.pk)
+            seen.append("free")
+        except OperationalError:
+            seen.append("locked")
+        finally:
+            connection.close()
+
+    with transaction.atomic():
+        assert D.find_delegation(deputy, task, lock=True) == d
+        t = threading.Thread(target=try_lock)
+        t.start()
+        t.join()
+    assert seen == ["locked"]

@@ -297,6 +297,16 @@ class WorkflowTask(models.Model):
         return f"{self.instance_id}/{self.seq} {self.get_kind_display()} ({self.get_status_display()})"
 
 
+DELEGATION_IMMUTABLE_MESSAGE = "Uỷ quyền đã tạo không được sửa; hãy thu hồi và tạo uỷ quyền mới"
+
+
+class DelegationQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if set(kwargs) != {"revoked_at"}:
+            raise PermissionError(DELEGATION_IMMUTABLE_MESSAGE)
+        return super().update(**kwargs)
+
+
 class Delegation(models.Model):
     """Uỷ quyền duyệt thay: `delegate` xử lý thay `delegator` trong khoảng ngày và phạm vi đã định.
 
@@ -329,6 +339,8 @@ class Delegation(models.Model):
     created_at = models.DateTimeField("Tạo lúc", default=timezone.now)
     revoked_at = models.DateTimeField("Thu hồi lúc", null=True, blank=True)
 
+    objects = DelegationQuerySet.as_manager()
+
     class Meta:
         ordering = ["-start_date", "pk"]
         verbose_name = "Uỷ quyền duyệt thay"
@@ -347,6 +359,13 @@ class Delegation(models.Model):
 
     def __str__(self):
         return f"Uỷ quyền #{self.pk}: {self.delegator} → {self.delegate}"
+
+    def save(self, *args, **kwargs):
+        """Bất biến sau khi tạo (không âm thầm nới thẩm quyền), trừ việc đánh dấu thu hồi."""
+        update_fields = kwargs.get("update_fields")
+        if not self._state.adding and (update_fields is None or set(update_fields) != {"revoked_at"}):
+            raise PermissionError(DELEGATION_IMMUTABLE_MESSAGE)
+        super().save(*args, **kwargs)
 
     def clean(self):
         valid = {code for code, _ in SUBJECT_KINDS}

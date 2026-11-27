@@ -1,7 +1,7 @@
 """Thời hạn xử lý, nhắc hạn, quá hạn, chuyển cấp và thông báo khi mở bước / kết thúc hồ sơ."""
 
 import threading
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -214,6 +214,51 @@ def test_locked_task_skipped_until_free(escalation_policy, make_req, org):
         release.set()
         t.join()
     assert process_sla(later) == SlaReport(reminded=0, overdue=1, escalated=0)
+
+
+def test_failing_task_does_not_stop_others(db, escalation_policy, make_req, org, frozen, monkeypatch, caplog):
+    from apps.workflow import sla
+
+    first = task_of(start(make_req(1_000_000), "requisition", org.requester), "APPROVE")
+    second = task_of(start(make_req(2_000_000), "requisition", org.requester), "APPROVE")
+    real_remind = sla._remind
+
+    def flaky(task, subject, now):
+        if task.pk == first.pk:
+            notify_rows = Notification.objects.count()
+            real_remind(task, subject, now)
+            assert Notification.objects.count() > notify_rows
+            raise RuntimeError("lỗi giả")
+        real_remind(task, subject, now)
+
+    monkeypatch.setattr(sla, "_remind", flaky)
+    assert run_sla(frozen, 7) == SlaReport(reminded=1, overdue=0, escalated=0)
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.reminded_at is None and second.reminded_at is not None
+    assert len(emails("REMINDER")) == 1  # thư của task lỗi đã rollback cùng transaction của nó
+    assert f"task #{first.pk}" in caplog.text
+
+    monkeypatch.setattr(sla, "_remind", real_remind)
+    assert run_sla(frozen, 0) == SlaReport(reminded=1, overdue=0, escalated=0)
+
+
+def test_local_timezone_boundary(db, in_budget_policy, make_req, org):
+    deputy = UserFactory(username="deputy")
+    late = UserFactory(username="late")
+    with freeze_time("2026-11-27T18:30:00Z"):  # 01:30 ngày 28/11 giờ Việt Nam
+        # người duyệt riêng, phân công lập trong thời điểm đóng băng (không phụ thuộc ngày chạy thật)
+        owner_itd = grant(UserFactory(username="tz_owner_itd"), R.BUDGET_OWNER, org.itd)
+        owner_adm = grant(UserFactory(username="tz_owner_adm"), R.BUDGET_OWNER, org.adm)
+        D.create_delegation(owner_itd, deputy, start_date=date(2026, 11, 26), end_date=date(2026, 11, 27))
+        D.create_delegation(owner_itd, late, start_date=date(2026, 11, 28), end_date=date(2026, 11, 28))
+        Outbox.objects.all().delete()
+        inst = start(make_req(100_000_000), "requisition", org.requester)
+        itd = task_of(inst, "BUDGET_OWNER", org_unit=org.itd)
+        assert D.can_act_on_behalf(deputy, itd) is None
+        assert D.can_act_on_behalf(late, itd) == owner_itd
+    assert emails("OFFICIAL", owner_itd)[0].payload["context"]["han_xu_ly"] == "30/11/2026 01:30"
+    assert deputy.email not in recipients("OFFICIAL") and late.email in recipients("OFFICIAL")
 
 
 def test_registered_as_worker_job(settings):

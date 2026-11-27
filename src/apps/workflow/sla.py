@@ -10,9 +10,11 @@ Với mỗi task PENDING có `due_at`:
 
 Mỗi loại chỉ gửi một lần cho mỗi task (đánh dấu thời điểm trên task). Mỗi task xử lý trong một
 transaction ngắn riêng với `select_for_update(skip_locked=True)`: task đang bị người duyệt khoá thì
-để lượt sau. Thứ tự trong transaction: khoá task → chèn thông báo → đánh dấu → audit (sau cùng).
+để lượt sau; task gây lỗi chỉ được ghi log (transaction của nó rollback) và không chặn các task
+khác — lượt sau thử lại. Thứ tự trong transaction: khoá task → chèn thông báo → đánh dấu → audit (sau cùng).
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -23,8 +25,10 @@ from apps.accounts.roles import ROLE_NAMES, users_with_role
 from apps.audit import service as audit
 from apps.notifications.outbox import notify
 
-from .engine import format_due, task_recipients, task_url
 from .models import PENDING, WorkflowTask
+from .notices import format_due, task_recipients, task_url
+
+logger = logging.getLogger(__name__)
 
 REMIND_BEFORE = timedelta(hours=24)
 
@@ -115,5 +119,11 @@ def process_sla(now=None) -> SlaReport:
                                         **filters)
             .order_by("due_at", "pk").values_list("pk", flat=True)
         )
-        counts[name] = sum(_process_one(pk, mark_field, filters, extra_check, action, now) for pk in ids)
+        done = 0
+        for pk in ids:
+            try:
+                done += _process_one(pk, mark_field, filters, extra_check, action, now)
+            except Exception:  # noqa: BLE001 - một task lỗi không được làm dừng SLA toàn công ty
+                logger.exception("Xử lý SLA (%s) cho task #%s lỗi", name, pk)
+        counts[name] = done
     return SlaReport(**counts)

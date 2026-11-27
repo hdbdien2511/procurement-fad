@@ -49,14 +49,21 @@ def _barred(task):
     return resolver.barred_user_ids(task.instance) | set(resolver.sys_admin_ids())
 
 
-def find_delegation(delegate, task, delegator=None) -> Delegation | None:
-    """Uỷ quyền hợp lệ cho `delegate` xử lý `task` (người uỷ quyền có pk nhỏ nhất nếu có nhiều)."""
+def find_delegation(delegate, task, delegator=None, *, lock=False) -> Delegation | None:
+    """Uỷ quyền hợp lệ cho `delegate` xử lý `task` (người uỷ quyền có pk nhỏ nhất nếu có nhiều).
+
+    `lock=True` (dùng trong `engine.act`): khoá dòng uỷ quyền tới hết transaction để một lần thu
+    hồi đồng thời phải chờ (hoặc đã thắng và điều kiện `revoked_at` trống được kiểm lại).
+    """
     if not delegate.is_active or delegate.pk in _barred(task):
         return None
     qs = _valid_for_task(active_delegations_for(delegate, timezone.localdate()), task)
     if delegator is not None:
         qs = qs.filter(delegator=delegator)
-    return qs.select_related("delegator").order_by("delegator_id", "pk").first()
+    qs = qs.select_related("delegator").order_by("delegator_id", "pk")
+    if lock:
+        qs = qs.select_for_update(of=("self",))
+    return qs.first()
 
 
 def can_act_on_behalf(delegate, task) -> User | None:

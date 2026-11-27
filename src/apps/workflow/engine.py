@@ -27,9 +27,8 @@ from django.utils import timezone
 from apps.audit import service as audit
 from apps.core.services import get_setting
 from apps.documents.models import DOC_TYPES, MEETING_MINUTES, Document
-from apps.notifications.outbox import notify
 
-from . import delegation, resolver
+from . import delegation, notices, resolver
 from .exceptions import (  # noqa: F401  (re-export: engine.NotAllowed, ...)
     AlreadyProcessed,
     Misconfigured,
@@ -44,7 +43,6 @@ from .models import (
     APPROVED,
     BUDGET_CHANGE,
     COMMENTED,
-    INSTANCE_STATUSES,
     MEETING,
     PENDING,
     PROPOSE,
@@ -167,43 +165,14 @@ def _resolve_actor(task, user, on_behalf_of):
     if on_behalf_of is None:
         if candidates(task).filter(pk=user.pk).exists():
             return user, None
-        found = delegation.find_delegation(user, task)
+        found = delegation.find_delegation(user, task, lock=True)
         if found is None:
             raise NotAllowed("Bạn không có quyền xử lý bước này")
     else:
-        found = delegation.find_delegation(user, task, delegator=on_behalf_of)
+        found = delegation.find_delegation(user, task, delegator=on_behalf_of, lock=True)
         if found is None:
             raise NotAllowed("Không có uỷ quyền hợp lệ để xử lý thay người này")
     return found.delegator, found
-
-
-# --- thông báo ------------------------------------------------------------------------------------
-
-def task_url(task) -> str:
-    return f"/viec/{task.pk}/"  # trang xử lý việc (giao diện làm ở task sau)
-
-
-def format_due(due_at) -> str:
-    return timezone.localtime(due_at).strftime("%d/%m/%Y %H:%M") if due_at else ""
-
-
-def task_recipients(task) -> list:
-    """Người xử lý trực tiếp + người nhận uỷ quyền hợp lệ của họ, tính tại thời điểm gọi."""
-    users = list(candidates(task).order_by("pk"))
-    seen = {u.pk for u in users}
-    users += [u for u in delegation.delegates_for(task).order_by("pk") if u.pk not in seen]
-    return users
-
-
-def _notify_opened(task, subject):
-    ho_so = str(subject)
-    if task.mandatory:
-        template, title = "OFFICIAL", f"Hồ sơ {ho_so} cần duyệt"
-    else:
-        template, title = "CONSULT", f"Xin ý kiến về hồ sơ {ho_so}"
-    for user in task_recipients(task):
-        notify(user, title, task_url(task), email_template=template,
-               context={"ho_so": ho_so, "han_xu_ly": format_due(task.due_at)})
 
 
 # --- tiến trình -----------------------------------------------------------------------------------
@@ -280,13 +249,9 @@ def _send_notifications(run):
     run.notified = True
     for task in run.instance.tasks.filter(pk__in=run.opened, status=PENDING).order_by("seq", "pk"):
         task.instance = run.instance
-        _notify_opened(task, run.subject)
-    instance = run.instance
-    if instance.status != RUNNING:
-        ho_so, ket_qua = str(run.subject), dict(INSTANCE_STATUSES)[instance.status]
-        url = run.subject.get_absolute_url() if hasattr(run.subject, "get_absolute_url") else "/"
-        notify(instance.submitted_by, f"Hồ sơ {ho_so}: {ket_qua}", url, email_template="RESULT",
-               context={"ho_so": ho_so, "ket_qua": ket_qua})
+        notices.notify_opened(task, run.subject)
+    if run.instance.status != RUNNING:
+        notices.notify_result(run.instance, run.subject)
 
 
 def _finish(run, status, subject):

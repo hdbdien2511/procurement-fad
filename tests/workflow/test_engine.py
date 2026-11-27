@@ -517,6 +517,25 @@ def test_used_policy_can_be_deactivated_only(db, running_instance, in_budget_pol
     assert in_budget_policy.code == "TRONG_NGAN_SACH" and in_budget_policy.is_active is False
 
 
+def test_set_policy_active_service(db, running_instance, in_budget_policy, org):
+    from apps.workflow.policies import set_policy_active
+
+    set_policy_active(in_budget_policy, False, org.fad)
+    assert ApprovalPolicy.objects.get(pk=in_budget_policy.pk).is_active is False
+    set_policy_active(in_budget_policy, False, org.fad)  # không đổi: không ghi audit
+    events = AuditEvent.objects.filter(action="policy.deactivated", object_id=str(in_budget_policy.pk))
+    assert events.count() == 1 and events[0].actor == org.fad
+    assert events[0].changes["is_active"] == [True, False]
+
+    v2 = in_budget_policy.clone_as_new_version(timezone.localdate())  # v2 đang dùng
+    with pytest.raises(ValueError, match="đã có phiên bản khác đang dùng"):
+        set_policy_active(in_budget_policy, True, org.fad)
+    set_policy_active(v2, False, org.fad)
+    set_policy_active(in_budget_policy, True, org.fad)
+    assert ApprovalPolicy.objects.get(pk=in_budget_policy.pk).is_active is True
+    assert AuditEvent.objects.filter(action="policy.activated").count() == 1
+
+
 def test_unused_policy_is_editable(db, in_budget_policy):
     rule = in_budget_policy.rules.first()
     rule.label = "đổi tên"
