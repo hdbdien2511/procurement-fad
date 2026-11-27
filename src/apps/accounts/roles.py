@@ -1,7 +1,6 @@
-from datetime import date
-
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.audit.service import record
 
@@ -39,13 +38,13 @@ ROLE_NAMES = {
 
 
 def _active_assignments(role_code, org_unit, on):
-    """Phân công hiệu lực tại ngày `on` (mặc định hôm nay; `valid_to` tính cả ngày cuối).
+    """Phân công hiệu lực tại ngày `on` (mặc định hôm nay theo giờ địa phương; `valid_to` tính cả ngày cuối).
 
     - `org_unit=None`: chỉ phân công toàn công ty (org_unit null) thoả mãn.
     - `org_unit` cụ thể: phân công đúng đơn vị đó HOẶC phân công toàn công ty thoả mãn.
     Phân công theo đơn vị KHÔNG thoả mãn kiểm tra toàn công ty.
     """
-    on = on or date.today()
+    on = on or timezone.localdate()
     scope = Q(org_unit__isnull=True)
     if org_unit is not None:
         scope |= Q(org_unit=org_unit)
@@ -80,7 +79,7 @@ def assign(user, role_code, org_unit=None, valid_from=None, valid_to=None, actor
         user=user,
         role=Role.objects.get(code=role_code),
         org_unit=org_unit,
-        valid_from=valid_from or date.today(),
+        valid_from=valid_from or timezone.localdate(),
         valid_to=valid_to,
     )
     record(
