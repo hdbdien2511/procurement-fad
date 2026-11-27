@@ -1,7 +1,7 @@
 # Thiết kế: Nền tảng Procurement HSC (Đợt 1)
 
-- Ngày: 2026-11-27 (cập nhật lần 5: câu trả lời của IT; phân tích file Budget Control - ADM)
-- Trạng thái: BẢN NHÁP, chờ người dùng duyệt
+- Ngày: 2026-11-27 (cập nhật lần 6: chốt kiểm soát theo chi phí phân bổ; mô hình đơn vị quản lý ngân sách tập trung)
+- Trạng thái: BẢN NHÁP HOÀN CHỈNH, chờ người dùng duyệt
 - Người sở hữu nghiệp vụ: Kế toán / FAD (người dùng)
 - Ký hiệu: **[Đã chốt]** = người dùng quyết định; **[RFP]** = lấy từ tài liệu RFP; **[Đề xuất]** = Claude đề xuất, người dùng có thể sửa; **[Mở]** = chưa có câu trả lời.
 - Tài liệu nguồn: `RFP_eProcurement_v0.2.docx`, `RFP_eProcurement_As_is__To_be.xlsx` (không lưu vào repo, xem 8.6). Mã `R1`…`R89` trong tài liệu này là số thứ tự tiêu chí ở sheet "5. Thang điểm".
@@ -155,7 +155,7 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 
 ### 7.1 Bộ máy luồng duyệt
 - **Chính sách duyệt** có phiên bản, hiệu lực từ ngày. Gồm các **quy tắc**: điều kiện (trong/ngoài ngân sách, khoảng tiền quy đổi VND, luỹ kế năm, loại chi phí, phương án mua sắm (dự án/BAU/công tác…), phòng ban, mua ngoại lệ) → chuỗi **bước** (đề nghị, owner budget, tham vấn, FAD tiền kiểm, lớp 1/2/3, HĐQT).
-- Bước gắn **vai trò + phạm vi** (ví dụ "Trưởng phòng của phòng lập", "Owner của nguồn ngân sách", "đơn vị tham vấn theo nội dung"). Hồ sơ nhiều nguồn ngân sách có thể sinh **nhánh duyệt song song** cho từng owner.
+- Bước gắn **vai trò + phạm vi** (ví dụ "Trưởng phòng của phòng lập", "Đơn vị quản lý của dòng ngân sách", "đơn vị tham vấn theo nội dung"). Tờ trình dùng ngân sách của nhiều đơn vị sinh **nhánh xác nhận song song**, mỗi đơn vị quản lý một nhánh; đủ các nhánh mới đi tiếp.
 - Bước **bắt buộc chấp thuận** hoặc **chỉ cho ý kiến**: cấu hình được. Ý kiến tham vấn hiển thị cho người duyệt trước khi quyết định.
 - Khi nộp, hệ thống **chụp phiên bản chính sách**; sửa chính sách sau không ảnh hưởng hồ sơ đang chạy.
 - **Tự xác định luồng**, người lập không chọn tay. Luỹ kế ngoài ngân sách tự tính, phạm vi cấu hình được.
@@ -177,7 +177,7 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 | Chiều | Trong file Budget Control | Ghi chú thiết kế |
 |---|---|---|
 | Năm, tháng | Ngân sách lập **theo tháng** (cột Date của Budget_Expense/Budget_Capex) | Bút toán ngân sách gắn kỳ tháng |
-| Đơn vị Budget Control | 12 file: ADM, COM, DATA, DTI, HRM, ITD, OVH, PMO, Repair, RMD, T&E, UNION | Gồm phòng ban và các khoản quản lý tập trung (RFP: "Budget Control khối quản lý chi phí tập trung"). UNION tương ứng nguồn Công đoàn |
+| Đơn vị quản lý ngân sách | 12 file: ADM, COM, DATA, DTI, HRM, ITD, OVH, PMO, Repair, RMD, T&E, UNION | **[Đã chốt]** Mỗi đơn vị được phân công **quản lý ngân sách tập trung** cho nhóm chi phí thuộc chức năng của mình, cho toàn công ty (không chỉ chi tiêu của chính đơn vị đó). UNION tương ứng nguồn Công đoàn |
 | Mã chi phí (L8) | Ví dụ `AD_2.1.7D`; tiền tố theo đơn vị | Có cờ Capex/Opex |
 | Main item | 01…17 (ví dụ "02. Chi phí thuê và quản lý VP") | Ánh xạ L8 → Main item **có thể đổi theo năm** (cột Main_2025/2026/2027): lưu theo phiên bản năm |
 | Dự án (L10) | Ví dụ `Rental_FL7_26`, mặc định `BAU_ADM` | Có workstream, năm bắt đầu, phòng |
@@ -185,7 +185,13 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 | NCC (L9) | Loại hình, MST, tên | Nhập vào danh mục NCC |
 | Owner budget, nguồn ngân sách | (từ RFP) | |
 
-**Hai thước đo, kiểm soát theo chi phí phân bổ** **[Từ file; cần FAD xác nhận, 12.5]**
+**Đơn vị quản lý ngân sách và người đề nghị** **[Đã chốt + Đề xuất cách làm]**
+- Phòng đề nghị mua sắm **có thể khác** đơn vị quản lý ngân sách. Ví dụ, một phòng nghiệp vụ mua thiết bị CNTT dùng ngân sách do ITD quản lý.
+- Một tờ trình **có thể lấy ngân sách từ nhiều đơn vị**. Mỗi dòng của tờ trình được phân bổ (theo số tiền) vào một hoặc nhiều dòng ngân sách; mỗi đơn vị quản lý liên quan **xác nhận ngân sách** ở một nhánh song song trước khi FAD tiền kiểm (RFP: "yêu cầu được gửi đến owner budget").
+- **Vai trò "Quản trị Budget Control" (FAD)**: hiện một đầu mối FAD cập nhật toàn bộ 12 file. Trên hệ thống, vai trò này quản lý danh mục, nhập/điều chỉnh ngân sách theo hồ sơ đã duyệt, xem toàn bộ, nhưng không tự duyệt tờ trình.
+- Quyền xem: người đề nghị thấy số dư khả dụng của dòng ngân sách mình chọn; đơn vị quản lý thấy toàn bộ ngân sách mình quản lý (kể cả phần phòng khác đã dùng); FAD thấy tất cả.
+
+**Hai thước đo, kiểm soát theo chi phí phân bổ** **[Đã chốt]**
 - *Thanh toán*: theo ngày chi tiền.
 - *Chi phí*: phân bổ theo kỳ dịch vụ (ngày bắt đầu, số kỳ, chu kỳ Monthly/Quarterly/Yearly/Once-off), chia đều theo tháng. Ví dụ thuê văn phòng trả theo quý được phân bổ vào 3 tháng.
 - Trong file, cột YTD và % sử dụng ngân sách tính trên **chi phí phân bổ** của năm, không tính trên số tiền đã thanh toán. Hệ thống làm giống vậy và vẫn báo cáo song song số thanh toán.
@@ -378,8 +384,8 @@ Câu 11 (hướng phối hợp với RFP) chưa có trả lời.
 2. **Quy định uỷ quyền của HSC** [Mở, không chặn đợt 1].
 3. **Điều kiện ngoại lệ NCC ngoài danh sách** [Mở; cần cho đợt 2].
 4. **Xác nhận cách hiểu 4.1 câu 1**: thủ tục khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách".
-5. **Kiểm soát ngân sách theo chi phí phân bổ** (không theo số đã thanh toán), như cách file Budget Control đang tính YTD và %? [Mở, ảnh hưởng đợt 1]
-6. **12 đơn vị Budget Control**: mỗi file do ai làm owner? OVH, Repair, T&E, UNION do đơn vị nào quản lý tập trung? Một tờ trình có thể lấy ngân sách từ nhiều đơn vị không? [Mở, ảnh hưởng đợt 1]
+5. ~~Kiểm soát theo chi phí phân bổ?~~ **Đã chốt: có.**
+6. ~~12 đơn vị Budget Control?~~ **Đã chốt**: đơn vị được phân công quản lý ngân sách tập trung theo chức năng; FAD quản lý toàn bộ file; tờ trình có thể lấy ngân sách từ nhiều đơn vị. Còn lại: danh sách cụ thể đơn vị nào quản lý nhóm chi phí nào (OVH, Repair, T&E…) để cấu hình, cung cấp khi chuẩn bị dữ liệu.
 7. **DMS** (`dms.hsc.com.vn`) là hệ thống gì, đang lưu những chứng từ nào? Có cần kết nối hay thay thế không? [Mở]
 8. Quy tắc ngân sách **Capex** và khấu hao. [Mở, đợt 3]
 
@@ -394,7 +400,8 @@ Câu 11 (hướng phối hợp với RFP) chưa có trả lời.
 - Phân tách nhiệm vụ cứng trong code.
 - Uỷ quyền: không vượt thẩm quyền người uỷ quyền, không uỷ quyền bắc cầu.
 - Phần dành cho NCC: container và tên miền riêng, whitelist IP là lớp bổ sung; đường dẫn dùng một lần cho NCC không có IP tĩnh.
-- Kiểm soát ngân sách theo chi phí phân bổ theo tháng (chờ xác nhận 12.5); hợp đồng nhiều năm giữ chỗ theo kỳ từng năm, năm sau chưa có ngân sách thì cảnh báo.
+- Tờ trình nhiều đơn vị ngân sách: nhánh xác nhận song song của từng đơn vị quản lý, trước FAD tiền kiểm.
+- Kiểm soát ngân sách theo chi phí phân bổ theo tháng; hợp đồng nhiều năm giữ chỗ theo kỳ từng năm, năm sau chưa có ngân sách thì cảnh báo.
 - Lịch sử Data new nhập dạng chỉ đọc; tên người duyệt trong lịch sử giữ dạng văn bản.
 - Cấu hình hệ thống (SMTP, tích hợp, tỷ giá) trên giao diện, bí mật được mã hoá.
 - Thủ tục khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách" (chờ xác nhận, 12.4).
