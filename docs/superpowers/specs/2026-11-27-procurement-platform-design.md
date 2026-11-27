@@ -1,6 +1,6 @@
 # Thiết kế: Nền tảng Procurement HSC (Đợt 1)
 
-- Ngày: 2026-11-27 (cập nhật lần 4: thêm kho chứng từ + OCR tại chỗ; mẫu Budget Control)
+- Ngày: 2026-11-27 (cập nhật lần 5: câu trả lời của IT; phân tích file Budget Control - ADM)
 - Trạng thái: BẢN NHÁP, chờ người dùng duyệt
 - Người sở hữu nghiệp vụ: Kế toán / FAD (người dùng)
 - Ký hiệu: **[Đã chốt]** = người dùng quyết định; **[RFP]** = lấy từ tài liệu RFP; **[Đề xuất]** = Claude đề xuất, người dùng có thể sửa; **[Mở]** = chưa có câu trả lời.
@@ -8,7 +8,7 @@
 
 ---
 
-## 0. Quan hệ với RFP (CẦN LÀM RÕ TRƯỚC KHI DUYỆT)
+## 0. Quan hệ với RFP (cần làm rõ, không chặn đợt 1)
 
 RFP do IT phát hành để **mua giải pháp từ vendor**. Bản thiết kế này là **tự xây**. Hai việc này phải có quan hệ rõ ràng, nếu không sẽ trùng lặp công sức hoặc gây khó xử với IT. **[Mở, mục 12 câu 1]**
 
@@ -52,7 +52,12 @@ Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát n
 
 | Ràng buộc | Nguồn |
 |---|---|
-| Máy chủ nội bộ HSC, truy cập qua mạng nội bộ/VPN | [Đã chốt] |
+| Máy chủ nội bộ HSC: **Ubuntu 26.04, chạy Docker**; phải bàn giao **bộ cài đặt Docker** cho ứng dụng | [IT] |
+| CSDL **PostgreSQL**; đăng nhập **Microsoft Entra ID**; HRIS có API | [IT] |
+| Email gửi qua **máy chủ mail công ty**, cấu hình trong mục **Cài đặt** trên giao diện | [IT] |
+| Lưu trữ chứng từ **vĩnh viễn**; ký số dùng **hệ thống của FPT**; **IT phụ trách sao lưu** | [IT] |
+| Mã nguồn quản lý tập trung trên repo GitHub của dự án (đã được IT chấp thuận) | [IT] |
+| Truy cập nội bộ cho nhân viên; phần dành cho NCC mở ra Internet, IT whitelist IP của NCC | [IT] |
 | Người dùng cùng Claude làm bản mẫu; IT tiếp nhận vận hành | [Đã chốt] |
 | Tích hợp: SSO, SUN, PAS, IMS, email, Excel; HRIS (đợt sau) | [Đã chốt][RFP] |
 | PAS chưa có API; IMS và HRIS do FPT quản lý; một số mẫu mail PAS phụ thuộc VTIDC. Kết nối thật phụ thuộc bên thứ ba | [RFP] |
@@ -123,10 +128,12 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 
 - Python 3.12, Django 5.2 LTS (hỗ trợ đến 2028).
 - Giao diện: Django template + HTMX, không SPA. Thư viện CSS/JS đóng gói sẵn, không gọi CDN ngoài.
-- Docker Compose (app, db, nginx, worker), để IT cài một lệnh.
+- **Bộ cài đặt Docker** cho Ubuntu 26.04 **[IT]**: Docker Compose (app, db, nginx, worker), file `.env.example`, script cài đặt/nâng cấp/sao lưu/khôi phục, hướng dẫn vận hành. IT cài bằng một lệnh; nâng cấp phiên bản không mất dữ liệu (tự chạy migration).
+- **Cấu hình qua giao diện** (mục Cài đặt, chỉ quản trị hệ thống): máy chủ email (SMTP), tham số tích hợp (PAS, IMS, HRIS, Entra ID), bảng tỷ giá, thời hạn xử lý. Mật khẩu/khoá lưu **mã hoá** trong CSDL bằng khoá nằm ở biến môi trường; mọi thay đổi cấu hình ghi audit. **[IT + Đề xuất]**
 - Việc nền: bảng outbox trong PostgreSQL + worker; không Redis/Celery ở đợt 1.
 - API nội bộ: REST, xác thực bằng token cấp cho từng hệ thống, chỉ mở trong mạng nội bộ. Đáp ứng R13, R24, R48.
-- **Cổng NCC tách riêng:** NCC truy cập từ Internet, nên cổng này **không được** là cùng một ứng dụng với hệ thống nội bộ. Đặt ở DMZ, chỉ gọi vào hệ thống nội bộ qua API giới hạn. Đợt 2 làm trước phần nội bộ (người mua hàng nhập báo giá NCC gửi qua email); cổng NCC là quyết định riêng cùng IT. **[Đề xuất]**
+- **Phần dành cho NCC** **[IT: mở Internet, whitelist IP NCC]**: tách thành **container và tên miền riêng**, xác thực riêng (tài khoản NCC, không dùng Entra ID), chỉ có các chức năng NCC (hồ sơ năng lực, nhận yêu cầu báo giá, gửi báo giá, xem kết quả), qua Nginx có whitelist IP. Whitelist là **lớp bảo vệ bổ sung**, không thay cho xác thực và phân quyền. Lưu ý: nhiều NCC nhỏ không có IP tĩnh, nên cần phương án dự phòng: đường dẫn dùng một lần gửi qua email, có hạn dùng, kèm mã OTP. **[Đề xuất]**
+- **Tỷ giá:** bảng tỷ giá theo ngày, cấu hình trên giao diện, thay cho tỷ giá viết cứng trong công thức Excel hiện nay (7.5).
 - **Tiền tệ:** số tiền lưu dạng Decimal kèm loại tiền (VND, USD, HKD…) và tỷ giá tại ngày lập; quy đổi VND để so ngưỡng duyệt và trừ ngân sách. **[RFP; thay quyết định "chỉ VND" ở bản trước]**
 - Năm tài chính = năm dương lịch. **[Đề xuất]**
 - Giao diện tiếng Việt.
@@ -135,14 +142,14 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 
 | Thành phần | Nội dung | Tiêu chí RFP |
 |---|---|---|
-| `accounts` | Người dùng, Khối/Phòng ban, chức danh, vai trò. Bản mẫu: tài khoản nội bộ + MFA; chỗ nối SSO và đồng bộ HRIS cho IT bật sau | R59 |
+| `accounts` | Người dùng, Khối/Phòng ban, chức danh, vai trò. Đăng nhập **Microsoft Entra ID (OIDC)**; đồng bộ cơ cấu tổ chức, chức danh từ **HRIS API**. Bản mẫu: tài khoản nội bộ + MFA và bộ giả lập Entra/HRIS | R59 |
 | `audit` | Nhật ký chỉ-ghi-thêm (8.3); tra cứu; xuất cho kiểm toán | R59, R86 |
 | `documents` | Kho chứng từ (7.4): đính kèm nhiều file/hồ sơ, xem trước không cần tải, checklist loại chứng từ theo loại hồ sơ, mã băm SHA-256, trích chữ từ PDF và tìm kiếm toàn văn, thời hạn lưu trữ | R87 |
 | `workflow` | Bộ máy luồng duyệt cấu hình được (7.1), uỷ quyền (7.2), nhắc việc và chuyển cấp khi quá hạn | R20–R23, R63 |
 | `budget` | Sổ ngân sách (7.3): lập, duyệt, điều chỉnh/điều chuyển có duyệt, giữ chỗ, giải phóng, hoàn trả; số dư thời gian thực; nhập Excel | R1, R18, R19 |
 | `vendors` | Danh mục NCC cơ bản: thông tin, mã số thuế, tài khoản ngân hàng, nhóm hàng hoá/dịch vụ, trạng thái (hiệu lực/chờ duyệt/tạm ngưng/danh sách đen); nhập Excel. Quy trình đánh giá, duyệt NCC để đợt 2 | (nền cho R2–R13) |
 | `requisitions` | Tờ trình: theo mẫu, dòng hàng, đa tiền tệ, **nhiều nguồn ngân sách**, 03 báo giá đính kèm (hoặc lý do ngoại lệ), tham vấn, FAD tiền kiểm (màn hình riêng), duyệt end-to-end; lưu nháp, sao chép | R14–R17, R78 |
-| `notifications` | Email 2 mẫu (chính thức, xin ý kiến), mẫu mail chỉnh được không cần sửa code; thông báo trong hệ thống; "Việc chờ tôi" | R62, R83 |
+| `notifications` | Email qua máy chủ mail công ty (cấu hình SMTP trên giao diện, có nút gửi thử); 2 mẫu (chính thức, xin ý kiến), mẫu mail chỉnh được không cần sửa code; thông báo trong hệ thống; "Việc chờ tôi" | R62, R83 |
 | `integrations` | Bộ chuyển đổi SSO, SUN, PAS, IMS, HRIS, email. Đợt 1 dùng **bản giả lập** | (nền cho R60) |
 | `ui` (dùng chung) | Bảng dữ liệu chuẩn: lọc (lưu bộ lọc), sắp xếp nhiều cột, tìm nhanh, cố định tiêu đề, phân trang, tổng phụ, định dạng tiền + số tiền bằng chữ, gợi ý chọn, tự điền, kiểm tra khi nhập (MST, số tài khoản, trùng), chọn nhiều + duyệt hàng loạt, xuất Excel/PDF theo bộ lọc, liên kết chứng từ | R65–R81, R88 |
 
@@ -163,12 +170,45 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 - Ràng buộc: không uỷ quyền vượt thẩm quyền của chính mình; người nhận không được duyệt hồ sơ do chính họ lập; không uỷ quyền lại (không uỷ quyền bắc cầu). **[Đề xuất]**
 - Chi tiết quy định uỷ quyền của HSC: **[Mở, mục 12]**.
 
-### 7.3 Sổ ngân sách **[RFP + Đề xuất cách làm]**
-- **Chiều ngân sách:** Năm × Khối × Phòng ban × Main Item × Loại chi phí × Mã chi phí × Mã project; mỗi dòng có **Owner budget**; **nguồn ngân sách** (Công ty, Công đoàn…). **[RFP]** Ngân sách có thể theo hạn mức năm hoặc phân bổ theo timeline (tháng/quý). **[RFP]**
-- **Cách ghi nhận:** giống sổ kế toán. Mọi biến động ngân sách là một **bút toán ngân sách** chỉ-ghi-thêm: Kế hoạch được duyệt, Bổ sung, Điều chỉnh, Điều chuyển (hai bút toán đối ứng), Giữ chỗ (khi tờ trình được duyệt), Giải phóng (khi huỷ), Thực chi (khi PAS báo đã thanh toán), Hoàn trả (phần nghiệm thu thấp hơn giữ chỗ). Số dư = tổng các bút toán. Không sửa số trực tiếp; muốn sửa thì ghi bút toán điều chỉnh có duyệt. **[Đề xuất]**
-- **Số dư khả dụng** = Ngân sách được duyệt − Giữ chỗ − Thực chi. Hiển thị ngay khi lập tờ trình. **Không đủ hoặc không có ngân sách thì chặn**, kèm lối tạo nhanh đề nghị bổ sung/điều chuyển ngân sách (4.1 câu 1).
-- **Đề nghị bổ sung/điều chuyển ngân sách** là một loại hồ sơ chạy trên cùng bộ máy luồng duyệt (7.1), có chính sách duyệt riêng.
-- **Lập ngân sách năm:** sao chép từ năm trước (giữ nguyên / chỉnh / thêm dự án), nhập Excel, trình duyệt. Dự báo theo thực chi: đợt 3.
+### 7.3 Sổ ngân sách **[RFP + file Budget Control + Đề xuất cách làm]**
+
+**Chiều ngân sách** (đối chiếu với file Budget Control thực tế, 7.5):
+
+| Chiều | Trong file Budget Control | Ghi chú thiết kế |
+|---|---|---|
+| Năm, tháng | Ngân sách lập **theo tháng** (cột Date của Budget_Expense/Budget_Capex) | Bút toán ngân sách gắn kỳ tháng |
+| Đơn vị Budget Control | 12 file: ADM, COM, DATA, DTI, HRM, ITD, OVH, PMO, Repair, RMD, T&E, UNION | Gồm phòng ban và các khoản quản lý tập trung (RFP: "Budget Control khối quản lý chi phí tập trung"). UNION tương ứng nguồn Công đoàn |
+| Mã chi phí (L8) | Ví dụ `AD_2.1.7D`; tiền tố theo đơn vị | Có cờ Capex/Opex |
+| Main item | 01…17 (ví dụ "02. Chi phí thuê và quản lý VP") | Ánh xạ L8 → Main item **có thể đổi theo năm** (cột Main_2025/2026/2027): lưu theo phiên bản năm |
+| Dự án (L10) | Ví dụ `Rental_FL7_26`, mặc định `BAU_ADM` | Có workstream, năm bắt đầu, phòng |
+| Địa điểm | HSC (TP.HCM, HO), HNB (Hà Nội) | Ngân sách và báo cáo tách theo địa điểm |
+| NCC (L9) | Loại hình, MST, tên | Nhập vào danh mục NCC |
+| Owner budget, nguồn ngân sách | (từ RFP) | |
+
+**Hai thước đo, kiểm soát theo chi phí phân bổ** **[Từ file; cần FAD xác nhận, 12.5]**
+- *Thanh toán*: theo ngày chi tiền.
+- *Chi phí*: phân bổ theo kỳ dịch vụ (ngày bắt đầu, số kỳ, chu kỳ Monthly/Quarterly/Yearly/Once-off), chia đều theo tháng. Ví dụ thuê văn phòng trả theo quý được phân bổ vào 3 tháng.
+- Trong file, cột YTD và % sử dụng ngân sách tính trên **chi phí phân bổ** của năm, không tính trên số tiền đã thanh toán. Hệ thống làm giống vậy và vẫn báo cáo song song số thanh toán.
+
+**Cách ghi nhận:** mọi biến động là **bút toán ngân sách** chỉ-ghi-thêm, gắn kỳ tháng. **[Đề xuất]** Ánh xạ với trạng thái trong file:
+
+| Trạng thái trong Excel | Ý nghĩa (sheet Guide/Status) | Bút toán trong hệ thống | Trừ ngân sách |
+|---|---|---|---|
+| (Budget_Expense Original / Adjust) | Ngân sách gốc / điều chỉnh | Kế hoạch gốc / Điều chỉnh, Điều chuyển (cặp đối ứng) | – |
+| Pending | Xin nhưng chưa thực hiện | **Giữ chỗ** (khi tờ trình được duyệt) | Có (giữ chỗ) |
+| Pending transfer | Trả nhiều đợt, chưa kết chuyển | Giữ chỗ theo từng đợt | Có (giữ chỗ) |
+| Normal | Đã thanh toán và phân bổ | **Chi phí ghi nhận** (giải phóng giữ chỗ tương ứng) | Có |
+| Pending payment | Đã kết chuyển, chờ thanh toán | Chi phí ghi nhận, chưa thanh toán | Có |
+| Accrual / Reversal | Trích trước / Hoàn trích | Trích trước / Hoàn trích | Có / hoàn lại |
+| DEPRE | Khấu hao | Chi phí khấu hao (Capex) | Có |
+| Forecast | Dự báo | **Dự báo**, không trừ ngân sách | Không |
+
+- **Số dư khả dụng** (theo kỳ và luỹ kế năm) = Ngân sách (gốc + điều chỉnh) − Giữ chỗ − Chi phí ghi nhận. Hiển thị khi lập tờ trình. **Không đủ hoặc không có ngân sách thì chặn**, kèm lối tạo nhanh đề nghị bổ sung/điều chuyển (4.1).
+- **Hợp đồng nhiều năm** (ví dụ thuê kho 3–5 năm): giữ chỗ phân theo kỳ của từng năm; phần năm sau trừ vào ngân sách năm sau khi có. Nếu ngân sách năm sau chưa được duyệt, hệ thống cảnh báo chứ không chặn. **[Đề xuất]**
+- **Capex**: ngân sách đầu tư theo dõi riêng (Budget_Capex), chi phí ghi nhận qua khấu hao. Quy tắc chi tiết cần FAD giải thích. **[Mở]**
+- **Tỷ giá**: từ bảng tỷ giá theo ngày (mục 6).
+- **Đề nghị bổ sung/điều chuyển ngân sách** chạy trên bộ máy luồng duyệt (7.1).
+- **Lập ngân sách năm**: sao chép từ năm trước (giữ nguyên / chỉnh / thêm dự án), nhập Excel theo mẫu Budget_Expense/Budget_Capex, trình duyệt. Dự báo theo thực chi: đợt 3.
 
 ### 7.4 Kho chứng từ và OCR **[Đã chốt phương án A: OCR mã nguồn mở chạy tại chỗ]**
 - Mọi chứng từ nghiệp vụ mua hàng (tờ trình, báo giá, hợp đồng, PO, biên bản nghiệm thu, hoá đơn, ĐNTT) lưu tập trung, gắn với hồ sơ, tra cứu chéo được (drill-down).
@@ -178,13 +218,43 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
   - Bản scan/ảnh: **OCR chạy nền trên máy chủ HSC** bằng thư viện mã nguồn mở (Tesseract hoặc PaddleOCR, ngôn ngữ tiếng Việt), không gửi dữ liệu ra ngoài. Đợt 2. Chi phí: chỉ tài nguyên máy chủ (CPU, ổ đĩa), không phí bản quyền.
 - **Tìm kiếm toàn văn** trên nội dung chứng từ + thông tin hồ sơ, dùng tính năng full-text sẵn có của PostgreSQL (không thêm hệ thống tìm kiếm riêng). Đợt 1.
 - Tự bóc trường dữ liệu từ bản scan (số tiền, MST) để điền sẵn form: **để sau**, chỉ làm nếu thực tế cần.
-- **Lưu trữ:** mỗi loại chứng từ có thời hạn lưu; không ai xoá được trước hạn (kể cả quản trị viên); hết hạn thì đưa vào danh sách chờ huỷ có duyệt. Thời hạn tham khảo theo Luật Kế toán 2015 và Nghị định 174/2016: chứng từ dùng trực tiếp ghi sổ tối thiểu 10 năm, loại khác tối thiểu 5 năm. **Pháp chế xác nhận**, kèm câu hỏi: bản điện tử có thay được bản giấy không.
+- **Lưu trữ vĩnh viễn** **[IT]**: chứng từ không bao giờ bị xoá, kể cả bởi quản trị viên; không có chức năng xoá chứng từ đã gắn vào hồ sơ đã nộp (chỉ đánh dấu "thay thế bởi" bản mới). Sao lưu do IT phụ trách; bộ cài đặt có sẵn script sao lưu/khôi phục để IT dùng.
+- Dung lượng tăng liên tục: cần IT dự trù ổ đĩa. Hệ thống có báo cáo dung lượng theo năm.
+- **Ký số** **[IT: hệ thống của FPT]**: hợp đồng, biên bản ký qua hệ thống ký số FPT (đợt 2–3, chờ tài liệu API). Hệ thống lưu file đã ký và kết quả kiểm tra chữ ký.
+- **DMS hiện có** (`dms.hsc.com.vn`): file Budget Control có đường dẫn tới hồ sơ thanh toán trên DMS. Cần làm rõ vai trò của DMS để tránh hai kho chứng từ trùng nhau. **[Mở, 12.7]**
 - Bản gốc file không bao giờ bị ghi đè; bản OCR/chữ trích ra lưu riêng.
 
-### 7.5 Mẫu Budget Control **[Mở: chờ file]**
-- FAD đang quản lý ngân sách, chi tiêu trên các file Excel Budget Control. Thiết kế dùng file này để: (1) đối chiếu cấu trúc chiều ngân sách ở 7.3; (2) làm mẫu nhập số liệu đầu năm; (3) tái tạo báo cáo hiện có trong hệ thống (R49).
-- Nguyên tắc: tách dữ liệu gốc (vào sổ ngân sách), công thức (thành quy tắc tính, cần FAD giải thích công thức ngầm) và bố cục (thành báo cáo). Không sao chép nguyên bố cục Excel thành màn hình.
-- Chờ người dùng cung cấp file mẫu (được thay số giả, giữ nguyên cột, sheet, công thức).
+### 7.5 Phân tích file Budget Control (mẫu: Budget Control - ADM) **[Đã có file]**
+
+File gốc **không lưu trong repo**: có tên người thật và số liệu thật.
+
+**Cấu trúc file:**
+
+| Sheet | Nội dung | Dùng trong hệ thống |
+|---|---|---|
+| Guide, Status | Ý nghĩa các trạng thái; trạng thái nào ghi nhận P&L | Bảng ánh xạ ở 7.3 |
+| Budget_Expense / Budget_Capex | Ngân sách theo L8 × tháng × địa điểm: Original, Adjust, L10, ghi chú (~14.000 dòng) | Mẫu nhập ngân sách năm |
+| Data new | Sổ chi tiết giao dịch 2021–2026 (~6.000 dòng): trạng thái, ngày thanh toán, kỳ phân bổ, số kỳ, chu kỳ, diễn giải, L8, L10, nguyên tệ, quy đổi VND, NCC, địa điểm, phòng thanh toán, người duyệt (tờ trình / ĐNTT / đối soát ngân sách In-Out), đường dẫn DMS, phân bổ theo năm và theo tháng | Chuyển thành **lịch sử chi phí** (chỉ đọc) để báo cáo có số thực tế các năm trước |
+| L8_Code / L9_Code / L10_Code | Danh mục mã chi phí, NCC, dự án | Nhập danh mục |
+| Budget 2026 | Báo cáo theo L8 và Main item: thực tế 3 năm trước, đề nghị thanh toán, đã thanh toán, YTD, dự báo, ngân sách (gốc/điều chỉnh), %, còn lại; tách HCM/HN | **Báo cáo tái tạo** (R49) |
+| Reconcile BI | Đối chiếu ngân sách – chi phí theo L8 (đơn vị triệu đồng) cho BI | **Báo cáo tái tạo** + API xuất dữ liệu (R48) |
+
+**Rủi ro tìm thấy trong file** (bằng chứng cho việc cần hệ thống; FAD kiểm tra lại các điểm 4, 5, 8):
+1. **Tỷ giá viết cứng trong công thức** (USD 25.460, SGD 17.200, HKD 3.000), không đổi theo ngày.
+2. **Người duyệt nhập tay**: cùng một người có nhiều cách viết (thừa dấu cách, thiếu ngoặc, có/không chức danh), nên không thống kê chính xác theo người duyệt được.
+3. **Dữ liệu thiếu/không chuẩn**: khoảng 30% dòng (1.807/6.078) trống "Payment Dept."; 415 dòng trống ngày thanh toán; 22 dòng mã tiền tệ có dấu cách thừa.
+4. Công thức "%" ở dòng tổng nhóm A tham chiếu lỗi (`#REF!`).
+5. Cột "Payment Req" không đồng nhất: đa số dòng cộng cột K, một số dòng (ví dụ AD_10.1) cộng cột I.
+6. Số ngân sách lẻ thập phân (ví dụ 6.250.000,000000001) do chia đều theo tháng bằng số thực.
+7. Mỗi đơn vị một file, mã có tiền tố riêng; báo cáo toàn công ty phải gộp tay.
+8. Cột "Last year allocated" ở Reconcile BI dùng mảng năm `{2025,…,2029,2023}`, cần FAD giải thích ý nghĩa.
+
+**Kế hoạch chuyển dữ liệu** (đợt 1 làm công cụ, chạy thật ở đợt 4):
+1. Nhập danh mục L8 (kèm Main item theo năm, Capex/Opex), L10, L9 (NCC: chuẩn hoá MST, gộp trùng).
+2. Nhập ngân sách năm hiện hành từ Budget_Expense/Budget_Capex của 12 file (dùng số tiền Decimal, làm tròn đồng).
+3. Nhập lịch sử Data new làm lịch sử chi phí chỉ đọc; người duyệt dạng văn bản giữ nguyên (không ánh xạ vào tài khoản).
+4. Trước khi nhập, hệ thống xuất **báo cáo làm sạch**: dòng thiếu trường, mã không có trong danh mục, tiền tệ lạ. FAD sửa trên Excel rồi nhập lại.
+5. **Đối chiếu sau chuyển**: tổng theo L8 × năm × địa điểm trên hệ thống phải khớp với sheet Budget 2026 và Reconcile BI.
 
 ## 8. Bảo mật thông tin
 
@@ -202,7 +272,7 @@ Chuẩn tham chiếu: **OWASP ASVS mức 2**. IT/ATTT HSC bổ sung chuẩn nộ
 - Kiểm tra mọi dữ liệu nhập (form, Excel, API); file Excel đọc như dữ liệu, không chạy macro/công thức.
 - File tải lên: danh sách loại cho phép, giới hạn dung lượng, lưu ngoài thư mục web, đổi tên ngẫu nhiên; IT có thể nối quét virus (ClamAV).
 - API: token riêng cho từng hệ thống, quyền tối thiểu, giới hạn tần suất, ghi log mọi lần gọi.
-- Cổng NCC (đợt 2+): ứng dụng tách riêng ở DMZ, tài khoản NCC chỉ thấy dữ liệu của chính NCC đó, chống dò mật khẩu, kiểm thử xâm nhập riêng trước khi mở ra Internet.
+- Phần dành cho NCC (đợt 2+): container và tên miền riêng, whitelist IP tại Nginx (IT), tài khoản NCC chỉ thấy dữ liệu của chính NCC đó, chống dò mật khẩu, đường dẫn dùng một lần có hạn cho NCC không có IP tĩnh; kiểm thử xâm nhập riêng trước khi mở ra Internet.
 
 ### 8.3 Audit trail
 - Ghi mọi sự kiện (tạo, sửa (kèm giá trị trước/sau), nộp, duyệt, duyệt thay, từ chối, đăng nhập, đổi cấu hình, tải file, gọi API) vào bảng riêng: ai, lúc nào, từ đâu, làm gì.
@@ -221,12 +291,10 @@ Chuẩn tham chiếu: **OWASP ASVS mức 2**. IT/ATTT HSC bổ sung chuẩn nộ
 - Trước khi chạy thật: IT/ATTT rà soát code và pentest.
 
 ### 8.6 Nơi lưu code và tài liệu
-Repo đang ở **GitHub cá nhân** (`hdbdien2511/procurement-fad`). Đề xuất:
-1. Giữ repo ở chế độ **Private**.
-2. **Không** đưa vào repo: dữ liệu thật, file chính sách gốc, **file RFP gốc**, tên/email nhân viên thật, số liệu ngân sách thật. Bảng thẩm quyền ở mục 4 là bản trích để thiết kế; nếu chính sách nội bộ không cho phép, sẽ thay bằng số giả.
-3. Khi IT tiếp nhận: chuyển repo về hệ thống quản lý mã nguồn của HSC.
-
-Việc phát triển trên GitHub cá nhân và dùng công cụ AI với tài liệu nội bộ cần **người dùng xác nhận với IT/ATTT**.
+IT đã chấp thuận: mã nguồn quản lý tập trung trên repo GitHub của dự án (`hdbdien2511/procurement-fad`), được dùng công cụ AI hỗ trợ lập trình. **[IT]** Vẫn giữ nguyên tắc:
+1. Repo ở chế độ **Private**.
+2. **Không** đưa vào repo: dữ liệu thật, file chính sách/RFP/Budget Control gốc, tên/email nhân viên thật, số liệu thật. Dữ liệu mẫu trong `sample-data/` là dữ liệu giả, tạo theo cấu trúc file thật.
+3. Bảng thẩm quyền ở mục 4 là bản trích để thiết kế; nếu cần, thay bằng số giả.
 
 ## 9. Cấu trúc thư mục dự án **[Đề xuất]**
 
@@ -282,29 +350,38 @@ procurement-fad/
 | **1. Nền tảng** | Mục 7 | R1 (phần lập/điều chỉnh), R14–R23, R59, R62–R63, R65–R81, R83, R86–R88 | Một tờ trình (2 nguồn ngân sách, USD) chạy từ lập → tham vấn → FAD tiền kiểm → duyệt đủ lớp theo bảng mẫu, có duyệt thay, email, audit, chứng từ; giữ chỗ ngân sách đúng; người lập không tự duyệt được |
 | 2. NCC, tìm nguồn, hợp đồng | Đăng ký/đánh giá/duyệt NCC đầu năm, rủi ro, danh sách đen, xung đột lợi ích; yêu cầu báo giá, so sánh, đấu thầu, mua ngoại lệ; hợp đồng, review, phụ lục, nhắc gia hạn; API NCC cho PAS; OCR bản scan | R2–R13, R25–R28 | Từ nhu cầu → 03 báo giá → chọn NCC → hợp đồng đã duyệt |
 | 3. Thực hiện, thanh toán, báo cáo | PO, nhận hàng/nghiệm thu từng phần, hoàn trả ngân sách; đánh giá sau mua; **ĐNTT theo yêu cầu mua sắm (1 lần/nhiều đợt) và không qua yêu cầu mua sắm** (tạm ứng, hoàn ứng, chi BAU); đối chiếu 3 chiều, IMS, chênh lệch hoá đơn; duyệt FAD Kiểm soát 1 → 2 → Phê duyệt; chuyển lệnh sang PAS + nhận trạng thái; đọc XML hoá đơn điện tử; dữ liệu cho SUN; báo cáo, dashboard, hậu kiểm; in mẫu | R24, R29–R37, R41–R42, R44–R53, R82, R84–R85, R89; một phần R38 | Hồ sơ đi hết vòng đời trên một hệ thống; PAS chỉ còn bước chi tiền; báo cáo Budget Control tái tạo được |
-| 4. Bàn giao IT | SSO, kết nối thật SUN/PAS/IMS/HRIS, rà soát bảo mật, pentest, cài máy chủ HSC, UAT, đào tạo, go-live (PAS vẫn chi tiền) | R60, R61, R64 | IT ký nhận vận hành |
+| 4. Bàn giao IT | Entra ID, kết nối thật PAS/IMS (API) và SUN (Excel), HRIS; chuyển dữ liệu Budget Control; rà soát bảo mật và pentest (IT: thực hiện ở giai đoạn này, chưa cần trong lúc phát triển); bộ cài đặt Docker trên Ubuntu 26.04; UAT, đào tạo, go-live (PAS vẫn chi tiền) | R60, R61, R64 | IT ký nhận vận hành |
 | 5. Thay PAS (IT chủ trì) | Nối thẳng Bank Gateway (ký lệnh, chứng thư số), kết quả chi thật từ ngân hàng, đối soát sao kê, chuyển hết loại hồ sơ PAS còn lại và dữ liệu cũ, nối IMS trực tiếp; chạy song song rồi tắt PAS | R38, R39, R40, R43 | Một kỳ chạy song song không chênh lệch; ngân hàng và ATTT nghiệm thu |
 | Sau | Cổng NCC ra Internet; mở rộng Công tác | R54–R58 (+ phần portal của R2, R8) | Quyết định riêng |
 
 R13 và R24 (API NCC, số dư ngân sách cho PAS) chỉ cần khi PAS còn lập hồ sơ riêng; với phương án đã chọn, vẫn làm ở mức tối thiểu cho giai đoạn chuyển tiếp.
 
-## 11. Câu hỏi gửi IT (soạn sẵn)
-1. Máy chủ nội bộ chạy Linux hay Windows? Có cài được Docker không?
-2. CSDL chuẩn: PostgreSQL có được chấp nhận hay bắt buộc SQL Server?
-3. Đăng nhập công ty: Microsoft Entra ID, ADFS hay Active Directory (LDAP)? HRIS có API lấy cơ cấu tổ chức, chức danh không?
-4. Gửi email từ ứng dụng nội bộ qua máy chủ mail nào?
-5. PAS: có API hoặc cách nào để tạo hồ sơ thanh toán và lấy trạng thái thanh toán (file, thư mục chung, đọc CSDL)? Ai là đầu mối phía vendor PAS?
-6. SUN, IMS nhận/xuất dữ liệu theo cách nào? Đầu mối FPT cho IMS/HRIS?
-7. Có chuẩn bảo mật/checklist nội bộ nào ứng dụng mới phải đạt (tiêu chí "ATTT cho công ty chứng khoán" trong RFP cụ thể là gì)? Có yêu cầu pentest trước go-live?
-8. Có DMZ để đặt cổng NCC ra Internet không, hay cổng NCC phải do vendor/cloud đảm nhận?
-9. Có được phát triển trên GitHub (repo private) và dùng công cụ AI hỗ trợ lập trình không? Khi bàn giao chuyển mã nguồn về đâu?
-10. Chính sách lưu trữ chứng từ điện tử bao lâu? Sao lưu do ai phụ trách? Có hệ thống ký số đang dùng không? Máy chủ có đủ CPU cho OCR chạy nền không?
+## 11. Trả lời của IT (27/11/2026) và việc còn lại
+
+| # | Chủ đề | Trả lời của IT | Ảnh hưởng thiết kế |
+|---|---|---|---|
+| 1 | Máy chủ | Ubuntu 26.04, chạy Docker; yêu cầu bộ cài đặt Docker | Mục 6: bàn giao bộ cài đặt |
+| 2 | CSDL | PostgreSQL | Đúng thiết kế |
+| 3 | Đăng nhập, HRIS | Microsoft Entra ID; HRIS có API | OIDC với Entra ID; đồng bộ tổ chức từ HRIS |
+| 4 | Email | Máy chủ mail công ty, cấu hình trong mục Cài đặt trên giao diện | Màn hình cấu hình SMTP, mật khẩu mã hoá |
+| 5 | PAS | Có bộ API; cần xin tài liệu từ vendor PAS | **Việc còn lại:** xin tài liệu API PAS (tạo lệnh chi, lấy trạng thái) |
+| 6 | SUN, IMS | SUN và IMS xuất Excel; IMS có API | SUN: nhập/xuất Excel theo mẫu; IMS: API (ưu tiên), Excel dự phòng. **Việc còn lại:** mẫu file SUN, tài liệu API IMS |
+| 7 | Chuẩn bảo mật, pentest | Làm ở giai đoạn sau, chưa cần trong lúc phát triển | Vẫn áp dụng ASVS mức 2 khi viết code để pentest sau không phải sửa nhiều |
+| 8 | NCC truy cập | Ứng dụng ra Internet, IT whitelist IP NCC | Phần NCC tách container/tên miền, whitelist là lớp bổ sung; dự phòng cho NCC không có IP tĩnh |
+| 9 | Mã nguồn, AI | Được; mã nguồn quản lý tập trung trên repo GitHub của dự án | Mục 8.6 |
+| 10 | Lưu trữ, ký số, sao lưu | Lưu vĩnh viễn; ký số của FPT; IT phụ trách sao lưu | Không xoá chứng từ; tích hợp ký số FPT; script sao lưu cho IT. **Việc còn lại:** tài liệu API ký số FPT |
+
+Câu 11 (hướng phối hợp với RFP) chưa có trả lời.
 
 ## 12. Câu hỏi mở cho người dùng
-1. **Quan hệ với RFP** [Mở]: bản tự xây là (a) bản mẫu để làm rõ yêu cầu và kiểm chứng RFP trước khi chọn vendor, (b) phương án thay thế việc mua vendor (tự xây thành hệ thống chính thức), hay (c) phần bổ trợ chạy song song với hệ thống vendor? IT đã biết về việc tự xây chưa?
-2. **Quy định uỷ quyền của HSC** [Mở, không chặn đợt 1]: ai được uỷ quyền cho ai, có cần văn bản không, giới hạn thời gian/hạn mức? (Cơ chế chung ở 7.2, chờ quy định để cấu hình.)
-3. **Điều kiện ngoại lệ NCC ngoài danh sách** [Mở, người dùng cung cấp sau; cần cho đợt 2].
-4. **Xác nhận cách hiểu 4.1 câu 1**: thủ tục xin phê duyệt khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách" của bảng thẩm quyền.
+1. **Quan hệ với RFP** [Mở]: (a) bản mẫu làm rõ yêu cầu, (b) phương án tự xây, hay (c) bổ trợ?
+2. **Quy định uỷ quyền của HSC** [Mở, không chặn đợt 1].
+3. **Điều kiện ngoại lệ NCC ngoài danh sách** [Mở; cần cho đợt 2].
+4. **Xác nhận cách hiểu 4.1 câu 1**: thủ tục khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách".
+5. **Kiểm soát ngân sách theo chi phí phân bổ** (không theo số đã thanh toán), như cách file Budget Control đang tính YTD và %? [Mở, ảnh hưởng đợt 1]
+6. **12 đơn vị Budget Control**: mỗi file do ai làm owner? OVH, Repair, T&E, UNION do đơn vị nào quản lý tập trung? Một tờ trình có thể lấy ngân sách từ nhiều đơn vị không? [Mở, ảnh hưởng đợt 1]
+7. **DMS** (`dms.hsc.com.vn`) là hệ thống gì, đang lưu những chứng từ nào? Có cần kết nối hay thay thế không? [Mở]
+8. Quy tắc ngân sách **Capex** và khấu hao. [Mở, đợt 3]
 
 ## 13. Các quyết định Claude tự đưa ra (để người dùng rà)
 - Giao diện render phía máy chủ + HTMX, không SPA.
@@ -316,7 +393,10 @@ R13 và R24 (API NCC, số dư ngân sách cho PAS) chỉ cần khi PAS còn l�
 - Audit trail chỉ-ghi-thêm + chuỗi băm.
 - Phân tách nhiệm vụ cứng trong code.
 - Uỷ quyền: không vượt thẩm quyền người uỷ quyền, không uỷ quyền bắc cầu.
-- Cổng NCC là ứng dụng tách riêng ở DMZ; đợt 2 làm phần nội bộ trước.
+- Phần dành cho NCC: container và tên miền riêng, whitelist IP là lớp bổ sung; đường dẫn dùng một lần cho NCC không có IP tĩnh.
+- Kiểm soát ngân sách theo chi phí phân bổ theo tháng (chờ xác nhận 12.5); hợp đồng nhiều năm giữ chỗ theo kỳ từng năm, năm sau chưa có ngân sách thì cảnh báo.
+- Lịch sử Data new nhập dạng chỉ đọc; tên người duyệt trong lịch sử giữ dạng văn bản.
+- Cấu hình hệ thống (SMTP, tích hợp, tỷ giá) trên giao diện, bí mật được mã hoá.
 - Thủ tục khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách" (chờ xác nhận, 12.4).
 - Cổng chi tiền một điểm, đổi PAS ↔ Bank Gateway bằng cấu hình; lệnh chi khoá sau duyệt.
 - Tìm kiếm toàn văn dùng PostgreSQL, không thêm hệ thống tìm kiếm riêng; OCR chọn Tesseract hoặc PaddleOCR sau khi thử trên chứng từ mẫu.
