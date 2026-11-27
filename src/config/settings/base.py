@@ -25,6 +25,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "django_htmx",
     "axes",
+    "django_otp",
+    "django_otp.plugins.otp_totp",
     "csp",
     "apps.core",
     "apps.accounts",
@@ -38,6 +40,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django_otp.middleware.OTPMiddleware",
+    "apps.accounts.middleware.RequireMfaMiddleware",
     "apps.audit.middleware.AuditContextMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -78,6 +82,10 @@ AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
 ]
 
+LOGIN_URL = "/dang-nhap/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/dang-nhap/"
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {
@@ -93,6 +101,23 @@ AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_RESET_ON_SUCCESS = True
+AXES_LOCKOUT_TEMPLATE = "accounts/locked.html"
+
+# Entra ID OIDC: chỉ bật khi đủ cả ba biến môi trường
+OIDC_RP_CLIENT_ID = env("OIDC_RP_CLIENT_ID")
+OIDC_RP_CLIENT_SECRET = env("OIDC_RP_CLIENT_SECRET")
+OIDC_OP_TENANT_ID = env("OIDC_OP_TENANT_ID")
+OIDC_ENABLED = bool(OIDC_RP_CLIENT_ID and OIDC_RP_CLIENT_SECRET and OIDC_OP_TENANT_ID)
+if OIDC_ENABLED:
+    _entra = f"https://login.microsoftonline.com/{OIDC_OP_TENANT_ID}"
+    OIDC_OP_AUTHORIZATION_ENDPOINT = f"{_entra}/oauth2/v2.0/authorize"
+    OIDC_OP_TOKEN_ENDPOINT = f"{_entra}/oauth2/v2.0/token"
+    OIDC_OP_JWKS_ENDPOINT = f"{_entra}/discovery/v2.0/keys"
+    OIDC_OP_USER_ENDPOINT = "https://graph.microsoft.com/oidc/userinfo"
+    OIDC_RP_SIGN_ALGO = "RS256"
+    OIDC_RP_SCOPES = "openid email profile"
+    OIDC_CREATE_USER = False
+    AUTHENTICATION_BACKENDS.insert(1, "apps.accounts.auth.EntraOIDCBackend")
 
 LANGUAGE_CODE = "vi"
 TIME_ZONE = "Asia/Ho_Chi_Minh"

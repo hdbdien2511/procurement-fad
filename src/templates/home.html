@@ -1,0 +1,7 @@
+{% extends "accounts/_base.html" %}
+{% block title %}Trang chủ{% endblock %}
+{% block content %}
+<h1>Hệ thống mua sắm</h1>
+<p>Xin chào, {{ request.user.get_full_name|default:request.user.username }}.</p>
+<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Đăng xuất</button></form>
+{% endblock %}

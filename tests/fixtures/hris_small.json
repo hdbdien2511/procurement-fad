@@ -1,0 +1,10 @@
+{
+  "org_units": [
+    {"code": "ADM", "name": "Phòng Hành chính", "kind": "PHONG", "parent_code": "KHOI-VH"},
+    {"code": "KHOI-VH", "name": "Khối Vận hành", "kind": "KHOI", "parent_code": null}
+  ],
+  "employees": [
+    {"employee_code": "E001", "username": "nguyenvana", "email": "a@example.test", "full_name": "Nguyễn Văn A", "org_unit_code": "ADM", "title": "Chuyên viên", "entra_oid": "oid-001", "active": true},
+    {"employee_code": "E002", "username": "tranthib", "email": "b@example.test", "full_name": "Trần Thị B", "org_unit_code": "ADM", "title": "Trưởng phòng", "entra_oid": null, "active": true}
+  ]
+}

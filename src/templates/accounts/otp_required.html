@@ -1,0 +1,7 @@
+{% extends "accounts/_base.html" %}
+{% block title %}Chưa đăng ký thiết bị xác thực{% endblock %}
+{% block content %}
+<h1>Chưa đăng ký thiết bị xác thực</h1>
+<p>Tài khoản của bạn chưa có thiết bị xác thực hai lớp. Vui lòng liên hệ quản trị viên để được đăng ký thiết bị.</p>
+<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit">Đăng xuất</button></form>
+{% endblock %}
