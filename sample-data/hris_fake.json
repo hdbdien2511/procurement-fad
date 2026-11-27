@@ -1,0 +1,274 @@
+{
+  "org_units": [
+    {
+      "code": "KHOI-DEMO",
+      "name": "Khối Demo",
+      "kind": "KHOI",
+      "parent_code": null
+    },
+    {
+      "code": "DEMO-A",
+      "name": "Phòng Demo A",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
+    },
+    {
+      "code": "DEMO-B",
+      "name": "Phòng Demo B",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
+    },
+    {
+      "code": "ITD-DEMO",
+      "name": "Phòng CNTT Demo",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
+    },
+    {
+      "code": "ADM-DEMO",
+      "name": "Phòng Hành chính Demo",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
+    },
+    {
+      "code": "FAD-DEMO",
+      "name": "Phòng Tài chính Kế toán Demo",
+      "kind": "PHONG",
+      "parent_code": "KHOI-DEMO"
+    }
+  ],
+  "employees": [
+    {
+      "employee_code": "D001",
+      "username": "nv.mau1",
+      "email": "nv.mau1@example.com",
+      "full_name": "Nguyễn Văn Mẫu",
+      "org_unit_code": "DEMO-A",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "REQUESTER",
+          "org_unit_code": "DEMO-A"
+        }
+      ]
+    },
+    {
+      "employee_code": "D002",
+      "username": "tp.mau1",
+      "email": "tp.mau1@example.com",
+      "full_name": "Trần Thị Thử",
+      "org_unit_code": "DEMO-A",
+      "title": "Trưởng phòng",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "DEPT_HEAD",
+          "org_unit_code": "DEMO-A"
+        }
+      ]
+    },
+    {
+      "employee_code": "D003",
+      "username": "pho.mau1",
+      "email": "pho.mau1@example.com",
+      "full_name": "Lê Văn Phó Giả",
+      "org_unit_code": "DEMO-A",
+      "title": "Phó phòng",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "REQUESTER",
+          "org_unit_code": "DEMO-A"
+        }
+      ]
+    },
+    {
+      "employee_code": "D004",
+      "username": "nv.mau2",
+      "email": "nv.mau2@example.com",
+      "full_name": "Phạm Thị Ví Dụ",
+      "org_unit_code": "DEMO-B",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "REQUESTER",
+          "org_unit_code": "DEMO-B"
+        }
+      ]
+    },
+    {
+      "employee_code": "D005",
+      "username": "tp.mau2",
+      "email": "tp.mau2@example.com",
+      "full_name": "Hoàng Văn Kiểm Thử",
+      "org_unit_code": "DEMO-B",
+      "title": "Trưởng phòng",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "DEPT_HEAD",
+          "org_unit_code": "DEMO-B"
+        }
+      ]
+    },
+    {
+      "employee_code": "D006",
+      "username": "gddh.mau",
+      "email": "gddh.mau@example.com",
+      "full_name": "Vũ Thị Điều Hành Giả",
+      "org_unit_code": "KHOI-DEMO",
+      "title": "Giám đốc điều hành",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "GDDH",
+          "org_unit_code": "KHOI-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D007",
+      "username": "gdnv.mau",
+      "email": "gdnv.mau@example.com",
+      "full_name": "Đặng Văn Nghiệp Vụ Giả",
+      "org_unit_code": "KHOI-DEMO",
+      "title": "Giám đốc nghiệp vụ",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "GDNV",
+          "org_unit_code": "KHOI-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D008",
+      "username": "bo.itd",
+      "email": "bo.itd@example.com",
+      "full_name": "Bùi Thị Chủ Quản CNTT",
+      "org_unit_code": "ITD-DEMO",
+      "title": "Trưởng phòng",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "BUDGET_OWNER",
+          "org_unit_code": "ITD-DEMO"
+        },
+        {
+          "role": "DEPT_HEAD",
+          "org_unit_code": "ITD-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D009",
+      "username": "bo.adm",
+      "email": "bo.adm@example.com",
+      "full_name": "Ngô Văn Chủ Quản HC",
+      "org_unit_code": "ADM-DEMO",
+      "title": "Trưởng phòng",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "BUDGET_OWNER",
+          "org_unit_code": "ADM-DEMO"
+        },
+        {
+          "role": "DEPT_HEAD",
+          "org_unit_code": "ADM-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D010",
+      "username": "fad.tienkiem",
+      "email": "fad.tienkiem@example.com",
+      "full_name": "Đỗ Thị Tiền Kiểm",
+      "org_unit_code": "FAD-DEMO",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "FAD_PRECHECK",
+          "org_unit_code": "FAD-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D011",
+      "username": "fad.ngansach",
+      "email": "fad.ngansach@example.com",
+      "full_name": "Dương Văn Ngân Sách",
+      "org_unit_code": "FAD-DEMO",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "FAD_BUDGET_ADMIN",
+          "org_unit_code": "FAD-DEMO"
+        }
+      ]
+    },
+    {
+      "employee_code": "D012",
+      "username": "thuky.bms",
+      "email": "thuky.bms@example.com",
+      "full_name": "Lý Thị Thư Ký BMS",
+      "org_unit_code": "FAD-DEMO",
+      "title": "Thư ký BMS",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "BMS_SECRETARY",
+          "org_unit_code": null
+        }
+      ]
+    },
+    {
+      "employee_code": "D013",
+      "username": "ceo.mau",
+      "email": "ceo.mau@example.com",
+      "full_name": "Mai Văn Tổng Giả",
+      "org_unit_code": "KHOI-DEMO",
+      "title": "Tổng giám đốc",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "CEO",
+          "org_unit_code": null
+        }
+      ]
+    },
+    {
+      "employee_code": "D014",
+      "username": "nv.itd",
+      "email": "nv.itd@example.com",
+      "full_name": "Cao Thị Công Nghệ Giả",
+      "org_unit_code": "ITD-DEMO",
+      "title": "Chuyên viên",
+      "entra_oid": null,
+      "active": true,
+      "roles": [
+        {
+          "role": "REQUESTER",
+          "org_unit_code": "ITD-DEMO"
+        }
+      ]
+    }
+  ]
+}
