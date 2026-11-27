@@ -13,3 +13,6 @@ staticfiles/
 *.pdf
 !docs/**/*.docx
 !docs/**/*.pdf
+
+# graphify local knowledge graph (generated, ~14MB)
+graphify-out/
