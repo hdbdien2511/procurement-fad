@@ -1,6 +1,6 @@
 # Thiết kế: Nền tảng Procurement HSC (Đợt 1)
 
-- Ngày: 2026-11-27 (cập nhật lần 2: bổ sung từ RFP eProcurement v0.2 và file As-is/To-be)
+- Ngày: 2026-11-27 (cập nhật lần 3: chọn phương án thanh toán "xuyên suốt, chuyển dần"; chốt quy tắc ngân sách và NCC ngoài danh sách)
 - Trạng thái: BẢN NHÁP, chờ người dùng duyệt
 - Người sở hữu nghiệp vụ: Kế toán / FAD (người dùng)
 - Ký hiệu: **[Đã chốt]** = người dùng quyết định; **[RFP]** = lấy từ tài liệu RFP; **[Đề xuất]** = Claude đề xuất, người dùng có thể sửa; **[Mở]** = chưa có câu trả lời.
@@ -12,7 +12,13 @@
 
 RFP do IT phát hành để **mua giải pháp từ vendor**. Bản thiết kế này là **tự xây**. Hai việc này phải có quan hệ rõ ràng, nếu không sẽ trùng lặp công sức hoặc gây khó xử với IT. **[Mở, mục 12 câu 1]**
 
-Cho đến khi có câu trả lời, bản thiết kế viết theo hướng: **bản mẫu tự xây bám sát yêu cầu RFP**, chọn tương đương **Option 2 của RFP** (giữ PAS làm thanh toán, tích hợp hai chiều) vì người dùng đã chốt giữ PAS.
+Cho đến khi có câu trả lời, bản thiết kế viết theo hướng: **bản mẫu tự xây bám sát yêu cầu RFP**. Câu trả lời không làm thay đổi đợt 1, nhưng quyết định làm sâu đến đâu ở đợt 3–5.
+
+**Phương án thanh toán: "xuyên suốt, chuyển dần"** **[Đã chốt]**
+- Hệ thống mới làm **cả** đề nghị thanh toán (ĐNTT) và luồng duyệt FAD (Kiểm soát 1 → Kiểm soát 2 → Phê duyệt), để người dùng chỉ làm việc trên một hệ thống.
+- Giai đoạn đầu, lệnh đã duyệt được **chuyển sang PAS chỉ để chi tiền** qua Bank Gateway; trạng thái chi tiền lấy ngược về.
+- Khi phân hệ thanh toán chạy ổn, IT nối thẳng Bank Gateway, chuyển các loại hồ sơ PAS còn lại và dữ liệu cũ, rồi tắt PAS (đợt 5).
+- Các phương án đã cân nhắc: (1) Giữ PAS làm cả lập, duyệt và chi (Option 2 RFP): ít rủi ro nhất nhưng hai hệ thống, dễ lệch số liệu. (2) Thay PAS ngay (Option 1 RFP): một hệ thống nhưng rủi ro cao nhất, vì khâu chuyển tiền ra ngân hàng cần IT, ngân hàng, chứng thư số. Phương án 3 được chọn vì người dùng có một hệ thống ngay từ đầu, còn khâu rủi ro nhất được làm sau cùng bởi đúng người.
 
 ## 1. Vì sao làm
 
@@ -30,7 +36,7 @@ Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát n
 5. Đạt mức an toàn thông tin cho công ty chứng khoán. Đây là **điều kiện loại** trong RFP, nên bản tự xây cũng phải đạt cùng mức đó. **[RFP: R61]**
 
 ### Ngoài phạm vi
-- Thực hiện thanh toán, chuyển tiền qua ngân hàng, đối soát sao kê, thay PAS (R38, R39, R40, R43: chỉ áp dụng Option 1). **[Đã chốt]**
+- Chuyển tiền trực tiếp qua ngân hàng, đối soát sao kê, chuyển dữ liệu PAS cũ (R39, R40, R43) **cho đến đợt 5**; đợt 5 do IT chủ trì cùng ngân hàng. **[Đã chốt]**
 - Ghi sổ kế toán: vẫn ở SUN; hệ thống chỉ cung cấp dữ liệu. **[Đã chốt]**
 - Mở rộng "Công tác" (R54–R58, mức Nên có): để sau đợt 4. **[Đề xuất]**
 - Ứng dụng di động riêng (giao diện web vẫn dùng được trên điện thoại).
@@ -39,7 +45,7 @@ Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát n
 - Người dùng quay lại email/giấy vì hệ thống rườm rà hơn cách cũ.
 - Audit trail sửa được, hoặc có thao tác không được ghi.
 - Quy tắc duyệt phải sửa code mới đổi được.
-- Hai hệ thống (Procurement và PAS) lệch số liệu mà không ai phát hiện. Đây là rủi ro chính của Option 2. **[RFP]**
+- Lệnh chi trên hệ thống mới và PAS (giai đoạn chuyển tiếp) lệch nhau mà không ai phát hiện. Cần đối chiếu tự động hằng ngày giữa lệnh đã chuyển và trạng thái PAS trả về.
 - Dữ liệu thật hoặc tài liệu nội bộ HSC nằm trên hạ tầng cá nhân.
 
 ## 3. Ràng buộc
@@ -64,7 +70,7 @@ Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát n
 | | 5. Hợp đồng | Mua hàng / dịch vụ / nguyên tắc; soạn, đàm phán; Kế toán (FAD) + Pháp chế review; duyệt trước khi ký; ký số; lưu bản gốc; phụ lục; nhắc gia hạn trước 3–6 tháng; đợt thanh toán | Mới |
 | Thực hiện | 6. Mua sắm | Đơn đặt hàng; nhận hàng đủ/từng phần; nghiệm thu theo giai đoạn; điều chỉnh đơn, trả hàng; **hoàn trả ngân sách** phần không dùng | Mới |
 | | 7. Đánh giá sau mua | Khi hoàn thành hoặc sau chu kỳ (thường 1 năm); bảng điểm tiêu chí tuỳ biến; kết quả đưa vào đánh giá NCC năm sau | Mới |
-| Chi tiền, ghi sổ | 8. Thanh toán | Kế thừa chứng từ; đối chiếu 3 chiều (PO – nghiệm thu – hoá đơn); rà soát hoá đơn qua IMS; xử lý chênh lệch; **tạo hồ sơ trên PAS, nhận lại trạng thái** | PAS (giữ) + Mới |
+| Chi tiền, ghi sổ | 8. Thanh toán | Kế thừa chứng từ; đối chiếu 3 chiều (PO – nghiệm thu – hoá đơn); rà soát hoá đơn qua IMS; xử lý chênh lệch; **lập ĐNTT và duyệt FAD trên hệ thống mới**; chuyển lệnh đã duyệt sang PAS để chi (đến đợt 5: chi thẳng qua Bank Gateway) | Mới (+ PAS chỉ chi tiền, tạm thời) |
 | | 9. Hạch toán | Hạch toán trên SUN; hệ thống cung cấp dữ liệu kỳ dịch vụ để trích trước/phân bổ, thông tin tài sản cố định | SUN (giữ) |
 | Giám sát | 10. Báo cáo | Chi tiêu/ngân sách, NCC, hợp đồng, tiết kiệm, tuân thủ (đủ 03 báo giá, ngoại lệ, quá hạn), timeline từng bước duyệt; tuỳ chỉnh, có API | Mới |
 | | 11. Hậu kiểm | Chọn mẫu, checklist, ghi nhận phát hiện, theo dõi khắc phục đến khi đóng; cung cấp chứng từ cho kiểm toán | Mới |
@@ -85,9 +91,11 @@ Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát n
 
 Duyệt thanh toán: GĐĐH-TCKT (= GĐNV/GĐĐH + CFO). Quy trình duyệt FAD trên chứng từ thanh toán: Kiểm soát 1 → Kiểm soát 2 → Phê duyệt → Thanh toán → Hoàn thành → Lưu kho hồ sơ. **[RFP]**
 
-### 4.1 Điểm chưa nhất quán giữa các tài liệu (cần chốt)
-1. **Chi phí ngoài ngân sách:** RFP ghi "hệ thống chặn và khuyến nghị trình bổ sung ngân sách", nhưng chính sách mua sắm lại có luồng duyệt riêng cho khoản "chưa có trong ngân sách". → Thiết kế hỗ trợ cả hai, chọn bằng cấu hình (chặn hẳn / cho đi luồng ngoài ngân sách). Cần FAD chốt mặc định. **[Mở]**
-2. **NCC ngoài danh sách:** RFP mục b ghi "Bổ sung NCC (>20tr) chuyển tới bước lựa chọn NCC, không qua quy trình phê duyệt bổ sung NCC", nhưng Phụ lục 2 và sơ đồ quy trình ghi "NCC ngoài danh sách phải có ngoại lệ được duyệt / NCC mới: FAD tiền kiểm → BMS duyệt". → Thiết kế theo hướng chặt hơn (phải duyệt), cấu hình được. **[Mở]**
+### 4.1 Hai điểm chưa nhất quán giữa các tài liệu (đã chốt)
+1. **Chi phí chưa có ngân sách** **[Đã chốt]**: hệ thống **không cho mua sắm** (chặn tạo/nộp tờ trình) và yêu cầu làm thủ tục xin phê duyệt.
+   - Cách hiểu của Claude, cần xác nhận **[Đề xuất]**: thủ tục đó là **Đề nghị bổ sung/điều chuyển ngân sách**, được duyệt theo thẩm quyền ở nhóm "Ngoài ngân sách" của bảng thẩm quyền (kể cả hạn mức luỹ kế). Khi được duyệt, ngân sách được ghi tăng, và tờ trình đi theo luồng "Trong ngân sách". Hai tài liệu khớp nhau theo cách này.
+   - Khi chặn, hệ thống hiện số còn thiếu và nút tạo sẵn đề nghị bổ sung ngân sách với dữ liệu điền sẵn từ tờ trình.
+2. **NCC ngoài danh sách** **[Đã chốt]**: phải **xin phê duyệt bổ sung NCC**. Có một số điều kiện ngoại lệ, người dùng cung cấp sau → thiết kế **bộ quy tắc ngoại lệ cấu hình được** (điều kiện, ví dụ ngưỡng tiền, loại chi phí, mua khẩn cấp; kèm lý do bắt buộc và người duyệt ngoại lệ). Mặc định khi chưa có quy tắc: không có ngoại lệ.
 
 ## 5. Phương án công nghệ đã cân nhắc
 
@@ -158,7 +166,8 @@ NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, q
 ### 7.3 Sổ ngân sách **[RFP + Đề xuất cách làm]**
 - **Chiều ngân sách:** Năm × Khối × Phòng ban × Main Item × Loại chi phí × Mã chi phí × Mã project; mỗi dòng có **Owner budget**; **nguồn ngân sách** (Công ty, Công đoàn…). **[RFP]** Ngân sách có thể theo hạn mức năm hoặc phân bổ theo timeline (tháng/quý). **[RFP]**
 - **Cách ghi nhận:** giống sổ kế toán. Mọi biến động ngân sách là một **bút toán ngân sách** chỉ-ghi-thêm: Kế hoạch được duyệt, Bổ sung, Điều chỉnh, Điều chuyển (hai bút toán đối ứng), Giữ chỗ (khi tờ trình được duyệt), Giải phóng (khi huỷ), Thực chi (khi PAS báo đã thanh toán), Hoàn trả (phần nghiệm thu thấp hơn giữ chỗ). Số dư = tổng các bút toán. Không sửa số trực tiếp; muốn sửa thì ghi bút toán điều chỉnh có duyệt. **[Đề xuất]**
-- **Số dư khả dụng** = Ngân sách được duyệt − Giữ chỗ − Thực chi. Hiển thị ngay khi lập tờ trình; cảnh báo hoặc chặn khi vượt (4.1 câu 1).
+- **Số dư khả dụng** = Ngân sách được duyệt − Giữ chỗ − Thực chi. Hiển thị ngay khi lập tờ trình. **Không đủ hoặc không có ngân sách thì chặn**, kèm lối tạo nhanh đề nghị bổ sung/điều chuyển ngân sách (4.1 câu 1).
+- **Đề nghị bổ sung/điều chuyển ngân sách** là một loại hồ sơ chạy trên cùng bộ máy luồng duyệt (7.1), có chính sách duyệt riêng.
 - **Lập ngân sách năm:** sao chép từ năm trước (giữ nguyên / chỉnh / thêm dự án), nhập Excel, trình duyệt. Dự báo theo thực chi: đợt 3.
 
 ## 8. Bảo mật thông tin
@@ -243,7 +252,9 @@ procurement-fad/
 └── .claude/                   Skills cho Claude (đã có)
 ```
 
-Đợt 2–3 thêm: `sourcing` (yêu cầu báo giá, đấu thầu, so sánh, ngoại lệ), `contracts`, `purchasing` (PO, nhận hàng, nghiệm thu), `evaluation` (đánh giá NCC), `payments_handoff` (đối chiếu, hồ sơ sang PAS), `reporting`, `post_audit`; dự án riêng `vendor-portal/` cho cổng NCC (nếu làm).
+Đợt 2–3 thêm: `sourcing` (yêu cầu báo giá, đấu thầu, so sánh, ngoại lệ), `contracts`, `purchasing` (PO, nhận hàng, nghiệm thu), `evaluation` (đánh giá NCC), `payments` (ĐNTT, đối chiếu, duyệt FAD, cổng chi tiền: PAS → Bank Gateway), `reporting`, `post_audit`; dự án riêng `vendor-portal/` cho cổng NCC (nếu làm).
+
+**Cổng chi tiền** (`payments`): mọi lệnh chi đã duyệt đi qua một điểm duy nhất với hai bộ chuyển đổi, "PAS" (đợt 3–4) và "Bank Gateway" (đợt 5). Đổi đích đến là đổi cấu hình, không viết lại luồng ĐNTT. Lệnh chi bị khoá sau khi duyệt: không sửa số tiền, người nhận, tài khoản; muốn đổi phải huỷ và lập lại.
 
 **Cách người dùng làm việc với cấu trúc này:** người dùng làm chủ `docs/01-nghiep-vu/` (quy trình, quy định, ma trận truy vết) và `docs/04-kiem-thu/` (kịch bản kiểm thử). Claude viết `src/`, `tests/`, `deploy/` theo tài liệu đó; mỗi thay đổi có kiểm thử chạy được.
 
@@ -254,11 +265,12 @@ procurement-fad/
 | 0. Chuẩn bị | Repo, tài liệu nghiệp vụ, câu hỏi gửi IT, dữ liệu giả; chốt mục 0 và 4.1 | – | IT trả lời mục 11 |
 | **1. Nền tảng** | Mục 7 | R1 (phần lập/điều chỉnh), R14–R23, R59, R62–R63, R65–R81, R83, R86–R88 | Một tờ trình (2 nguồn ngân sách, USD) chạy từ lập → tham vấn → FAD tiền kiểm → duyệt đủ lớp theo bảng mẫu, có duyệt thay, email, audit, chứng từ; giữ chỗ ngân sách đúng; người lập không tự duyệt được |
 | 2. NCC, tìm nguồn, hợp đồng | Đăng ký/đánh giá/duyệt NCC đầu năm, rủi ro, danh sách đen, xung đột lợi ích; yêu cầu báo giá, so sánh, đấu thầu, mua ngoại lệ; hợp đồng, review, phụ lục, nhắc gia hạn; API NCC cho PAS | R2–R13, R25–R28 | Từ nhu cầu → 03 báo giá → chọn NCC → hợp đồng đã duyệt |
-| 3. Thực hiện, thanh toán, báo cáo | PO, nhận hàng/nghiệm thu từng phần, hoàn trả ngân sách; đánh giá sau mua; đối chiếu 3 chiều, IMS, chênh lệch hoá đơn; hồ sơ sang PAS + nhận trạng thái; dữ liệu cho SUN; API số dư cho PAS; báo cáo, dashboard, hậu kiểm; in mẫu | R24, R29–R37, R41–R42, R44–R53, R82, R84–R85, R89 | Hồ sơ đi hết vòng đời; báo cáo Budget Control tái tạo được trong hệ thống |
-| 4. Bàn giao IT | SSO, kết nối thật SUN/PAS/IMS/HRIS, rà soát bảo mật, pentest, cài máy chủ HSC, UAT, đào tạo, go-live | R60, R61, R64 | IT ký nhận vận hành |
+| 3. Thực hiện, thanh toán, báo cáo | PO, nhận hàng/nghiệm thu từng phần, hoàn trả ngân sách; đánh giá sau mua; **ĐNTT theo yêu cầu mua sắm (1 lần/nhiều đợt) và không qua yêu cầu mua sắm** (tạm ứng, hoàn ứng, chi BAU); đối chiếu 3 chiều, IMS, chênh lệch hoá đơn; duyệt FAD Kiểm soát 1 → 2 → Phê duyệt; chuyển lệnh sang PAS + nhận trạng thái; dữ liệu cho SUN; báo cáo, dashboard, hậu kiểm; in mẫu | R24, R29–R37, R41–R42, R44–R53, R82, R84–R85, R89; một phần R38 | Hồ sơ đi hết vòng đời trên một hệ thống; PAS chỉ còn bước chi tiền; báo cáo Budget Control tái tạo được |
+| 4. Bàn giao IT | SSO, kết nối thật SUN/PAS/IMS/HRIS, rà soát bảo mật, pentest, cài máy chủ HSC, UAT, đào tạo, go-live (PAS vẫn chi tiền) | R60, R61, R64 | IT ký nhận vận hành |
+| 5. Thay PAS (IT chủ trì) | Nối thẳng Bank Gateway (ký lệnh, chứng thư số), kết quả chi thật từ ngân hàng, đối soát sao kê, chuyển hết loại hồ sơ PAS còn lại và dữ liệu cũ, nối IMS trực tiếp; chạy song song rồi tắt PAS | R38, R39, R40, R43 | Một kỳ chạy song song không chênh lệch; ngân hàng và ATTT nghiệm thu |
 | Sau | Cổng NCC ra Internet; mở rộng Công tác | R54–R58 (+ phần portal của R2, R8) | Quyết định riêng |
 
-Không làm: R38, R39, R40, R43 (chỉ Option 1).
+R13 và R24 (API NCC, số dư ngân sách cho PAS) chỉ cần khi PAS còn lập hồ sơ riêng; với phương án đã chọn, vẫn làm ở mức tối thiểu cho giai đoạn chuyển tiếp.
 
 ## 11. Câu hỏi gửi IT (soạn sẵn)
 1. Máy chủ nội bộ chạy Linux hay Windows? Có cài được Docker không?
@@ -274,8 +286,9 @@ Không làm: R38, R39, R40, R43 (chỉ Option 1).
 
 ## 12. Câu hỏi mở cho người dùng
 1. **Quan hệ với RFP** [Mở]: bản tự xây là (a) bản mẫu để làm rõ yêu cầu và kiểm chứng RFP trước khi chọn vendor, (b) phương án thay thế việc mua vendor (tự xây thành hệ thống chính thức), hay (c) phần bổ trợ chạy song song với hệ thống vendor? IT đã biết về việc tự xây chưa?
-2. **Quy định uỷ quyền của HSC** [Mở]: ai được uỷ quyền cho ai, có cần văn bản không, có giới hạn thời gian/hạn mức không? (Thiết kế 7.2 đã có cơ chế chung, chờ quy định để cấu hình.)
-3. **Hai điểm chưa nhất quán ở 4.1** [Mở]: chặn hay cho đi luồng ngoài ngân sách; NCC ngoài danh sách có phải duyệt không.
+2. **Quy định uỷ quyền của HSC** [Mở, không chặn đợt 1]: ai được uỷ quyền cho ai, có cần văn bản không, giới hạn thời gian/hạn mức? (Cơ chế chung ở 7.2, chờ quy định để cấu hình.)
+3. **Điều kiện ngoại lệ NCC ngoài danh sách** [Mở, người dùng cung cấp sau; cần cho đợt 2].
+4. **Xác nhận cách hiểu 4.1 câu 1**: thủ tục xin phê duyệt khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách" của bảng thẩm quyền.
 
 ## 13. Các quyết định Claude tự đưa ra (để người dùng rà)
 - Giao diện render phía máy chủ + HTMX, không SPA.
@@ -288,7 +301,8 @@ Không làm: R38, R39, R40, R43 (chỉ Option 1).
 - Phân tách nhiệm vụ cứng trong code.
 - Uỷ quyền: không vượt thẩm quyền người uỷ quyền, không uỷ quyền bắc cầu.
 - Cổng NCC là ứng dụng tách riêng ở DMZ; đợt 2 làm phần nội bộ trước.
-- Mặc định chặt hơn ở hai điểm chưa nhất quán (4.1) cho đến khi FAD chốt.
+- Thủ tục khi chưa có ngân sách = đề nghị bổ sung/điều chuyển ngân sách, duyệt theo nhóm "Ngoài ngân sách" (chờ xác nhận, 12.4).
+- Cổng chi tiền một điểm, đổi PAS ↔ Bank Gateway bằng cấu hình; lệnh chi khoá sau duyệt.
 - Mã tờ trình dạng `TT-2026-00001`.
 
 ## 14. Phần để người lập trình quyết định
