@@ -255,3 +255,85 @@ def test_concurrent_reserve_cannot_overspend(line_2026, user):
         t.join()
     assert sorted(results) == ["insufficient", "ok"]
     assert balance(line_2026).reserved == Decimal("60000000")
+
+
+def test_lock_only_budgetline_rows(line_2026, user, req):
+    from django.db import connection as conn
+    from django.test.utils import CaptureQueriesContext
+
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("100"), source=None, user=user)
+    with CaptureQueriesContext(conn) as ctx:
+        reserve([(line_2026, Decimal("100"))], start=date(2026, 1, 1), months=1, source=req, user=user)
+    locks = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
+    assert locks and all('FOR UPDATE OF "budget_budgetline"' in sql for sql in locks)
+    assert not any("budget_budgetunit" in sql.split("FOR UPDATE", 1)[1] for sql in locks)
+
+
+def test_reserve_rejects_start_before_line_year(line_2026, user, req):
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("1000"), source=None, user=user)
+    with pytest.raises(ValueError):
+        reserve([(line_2026, Decimal("100"))], start=date(2025, 12, 1), months=2, source=req, user=user)
+    assert not BudgetEntry.objects.filter(kind=RESERVE).exists()
+
+
+def test_post_rejects_period_outside_line_year(line_2026, user):
+    with pytest.raises(ValueError):
+        post(line_2026, date(2027, 1, 1), ORIGINAL, Decimal("1"), source=None, user=user)
+
+
+@pytest.mark.parametrize("amount", [1.0, Decimal("10.5")])
+def test_post_rejects_float_and_fractional(line_2026, user, amount):
+    with pytest.raises(ValueError):
+        post(line_2026, date(2026, 1, 1), ORIGINAL, amount, source=None, user=user)
+
+
+@pytest.mark.parametrize("amount", [Decimal("0"), Decimal("-5")])
+def test_reserve_rejects_non_positive_amount(line_2026, user, req, amount):
+    with pytest.raises(ValueError):
+        reserve([(line_2026, amount)], start=date(2026, 1, 1), months=1, source=req, user=user)
+
+
+def test_release_requires_source(user):
+    with pytest.raises(ValueError):
+        release(None, user)
+
+
+def test_two_allocations_same_line_sum_exceeds(line_2026, user, req):
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("100"), source=None, user=user)
+    with pytest.raises(InsufficientBudget) as e:
+        reserve(
+            [(line_2026, Decimal("60")), (line_2026, Decimal("60"))],
+            start=date(2026, 1, 1),
+            months=1,
+            source=req,
+            user=user,
+        )
+    assert e.value.shortfalls == [(line_2026, Decimal("20"))]
+
+
+def test_release_after_partial_release(line_2026, user, req):
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("300"), source=None, user=user)
+    reserve([(line_2026, Decimal("200"))], start=date(2026, 1, 1), months=2, source=req, user=user)
+    post(line_2026, date(2026, 1, 1), RELEASE, Decimal("-30"), source=req, user=user)
+    release(req, user)
+    rel = list(
+        BudgetEntry.objects.filter(kind=RELEASE).order_by("id").values_list("period", "amount")
+    )
+    assert rel == [
+        (date(2026, 1, 1), Decimal("-30")),
+        (date(2026, 1, 1), Decimal("-70")),
+        (date(2026, 2, 1), Decimal("-100")),
+    ]
+    assert balance(line_2026).reserved == 0
+
+
+def test_same_source_reserved_twice_then_released(line_2026, user, req):
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("300"), source=None, user=user)
+    reserve([(line_2026, Decimal("100"))], start=date(2026, 1, 1), months=1, source=req, user=user)
+    reserve([(line_2026, Decimal("50"))], start=date(2026, 1, 1), months=1, source=req, user=user)
+    assert balance(line_2026).reserved == Decimal("150")
+    release(req, user)
+    assert balance(line_2026).reserved == 0
+    assert list(BudgetEntry.objects.filter(kind=RELEASE).values_list("amount", flat=True)) == [
+        Decimal("-150")
+    ]

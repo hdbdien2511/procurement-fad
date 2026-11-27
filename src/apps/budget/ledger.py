@@ -16,7 +16,7 @@ from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.audit import service as audit
-from apps.core.money import format_vnd
+from apps.core.money import format_vnd, round_vnd
 
 from .allocation import allocate
 from .models import (
@@ -64,11 +64,23 @@ def _source_key(source) -> tuple[str, str]:
     return source._meta.label_lower, str(source.pk)
 
 
-def _validate(period: date, kind: str, amount: Decimal) -> None:
+def _to_vnd(amount) -> Decimal:
+    """Chuyển về Decimal; từ chối float và số lẻ dưới một đồng."""
+    if isinstance(amount, float):
+        raise ValueError("Số tiền phải là Decimal, không dùng float.")
+    amount = Decimal(amount)
+    if amount != round_vnd(amount):
+        raise ValueError("Số tiền VND phải là số nguyên đồng.")
+    return amount
+
+
+def _validate(line: BudgetLine, period: date, kind: str, amount: Decimal) -> None:
     if kind not in _KIND_CODES:
         raise ValueError(f"Loại bút toán không hợp lệ: {kind}")
     if period.day != 1:
         raise ValueError("Kỳ ngân sách phải là ngày đầu tháng.")
+    if period.year != line.year:
+        raise ValueError(f"Kỳ {period:%m/%Y} không thuộc năm {line.year} của dòng ngân sách.")
     if kind in NEGATIVE_KINDS and amount > 0:
         raise ValueError(f"Bút toán {kind} phải có số tiền âm hoặc bằng 0.")
     if kind in NON_NEGATIVE_KINDS and amount < 0:
@@ -76,8 +88,8 @@ def _validate(period: date, kind: str, amount: Decimal) -> None:
 
 
 def _build(line, period, kind, amount, *, source, user, note="") -> BudgetEntry:
-    amount = Decimal(amount)
-    _validate(period, kind, amount)
+    amount = _to_vnd(amount)
+    _validate(line, period, kind, amount)
     source_type, source_id = _source_key(source)
     return BudgetEntry(
         line=line, period=period, kind=kind, amount=amount,
@@ -127,9 +139,12 @@ def balance(line: BudgetLine, *, through: date | None = None) -> Balance:
 
 
 def _lock(line_ids) -> dict[int, BudgetLine]:
-    """Khoá các dòng theo thứ tự pk tăng dần (tránh deadlock)."""
+    """Khoá các dòng theo thứ tự pk tăng dần (tránh deadlock).
+
+    `of=("self",)`: chỉ khoá dòng ngân sách, không khoá các bảng danh mục được select_related.
+    """
     qs = (
-        BudgetLine.objects.select_for_update()
+        BudgetLine.objects.select_for_update(of=("self",))
         .filter(pk__in=set(line_ids))
         .select_related("budget_unit", "cost_code", "project", "location")
         .order_by("pk")
@@ -153,21 +168,32 @@ def reserve(
 ) -> list[str]:
     """Giữ chỗ ngân sách, phân bổ đều theo tháng.
 
-    Kỳ thuộc năm của dòng: kiểm tra đủ ngân sách trên số khả dụng cả năm, thiếu thì raise
+    `start` không được sớm hơn năm của dòng. Kỳ thuộc năm của dòng: kiểm tra đủ ngân sách trên số khả dụng cả năm, thiếu thì raise
     `InsufficientBudget` (kiểm tra mọi dòng trước, không ghi gì). Kỳ thuộc năm sau: ghi vào dòng
     cùng chiều của năm đó (tự tạo nếu chưa có) và trả cảnh báo nếu năm đó chưa đủ ngân sách.
     """
     if source is None:
         raise ValueError("Giữ chỗ phải gắn với hồ sơ nguồn.")
+    allocations = [(line, _to_vnd(amount)) for line, amount in allocations]
+    for line, amount in allocations:
+        if amount <= 0:
+            raise ValueError("Số tiền giữ chỗ phải lớn hơn 0.")
+        if start.year < line.year:
+            raise ValueError(
+                f"Kỳ bắt đầu {start:%m/%Y} sớm hơn năm {line.year} của dòng ngân sách {line}."
+            )
     with transaction.atomic():
-        # 1. Kế hoạch: (dòng gốc, kỳ, số tiền); tạo trước dòng năm sau để khoá cùng lúc.
-        plan: list[tuple[BudgetLine, date, Decimal]] = []
+        # 1. Kế hoạch: (dòng gốc, kỳ, số tiền).
+        plan: list[tuple[BudgetLine, date, Decimal]] = [
+            (line, period, amt)
+            for line, amount in allocations
+            for period, amt in allocate(amount, start, months)
+        ]
+        # Tạo trước dòng năm sau (theo thứ tự pk) để khoá cùng lúc với dòng gốc.
         future: dict[tuple[int, int], BudgetLine] = {}
-        for line, amount in allocations:
-            for period, amt in allocate(amount, start, months):
-                if period.year != line.year and (line.pk, period.year) not in future:
-                    future[(line.pk, period.year)] = _line_for_year(line, period.year)
-                plan.append((line, period, amt))
+        for line, period, _ in sorted(plan, key=lambda r: (r[0].pk, r[1])):
+            if period.year != line.year and (line.pk, period.year) not in future:
+                future[(line.pk, period.year)] = _line_for_year(line, period.year)
 
         locked = _lock([line.pk for line, _ in allocations] + [f.pk for f in future.values()])
 
@@ -215,6 +241,8 @@ def reserve(
 
 def release(source, user) -> None:
     """Giải phóng toàn bộ giữ chỗ còn lại của `source` (RELEASE âm theo từng kỳ). Gọi lại không ghi gì."""
+    if source is None:
+        raise ValueError("Giải phóng giữ chỗ phải gắn với hồ sơ nguồn.")
     source_type, source_id = _source_key(source)
     with transaction.atomic():
         mine = BudgetEntry.objects.filter(
