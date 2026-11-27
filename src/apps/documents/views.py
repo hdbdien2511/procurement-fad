@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404, HttpResponseForbidden
 from django.shortcuts import get_object_or_404
@@ -16,8 +19,8 @@ def _serve(request, pk, inline: bool):
     doc = get_object_or_404(Document, pk=pk)
     if not can_view_object(request.user, doc.attached_to):
         return HttpResponseForbidden("Bạn không có quyền xem chứng từ này")
-    path = absolute_path(doc.stored_path)
-    if not path.is_file():
+    path = absolute_path(doc.stored_path).resolve()
+    if not path.is_relative_to(Path(settings.MEDIA_ROOT).resolve()) or not path.is_file():
         raise Http404
     as_attachment = not (inline and doc.mime in INLINE_MIMES)
     response = FileResponse(
@@ -27,6 +30,8 @@ def _serve(request, pk, inline: bool):
         content_type=doc.mime,
     )
     response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "sandbox"
+    response["Cache-Control"] = "private, no-store"
     record(
         "document.downloaded",
         doc,

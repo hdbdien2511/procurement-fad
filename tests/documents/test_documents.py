@@ -152,6 +152,8 @@ def test_download_and_inline(client, owner, pdf_doc):
     assert r.status_code == 200
     assert r["Content-Disposition"].startswith("attachment")
     assert r["X-Content-Type-Options"] == "nosniff"
+    assert r["Content-Security-Policy"] == "sandbox"
+    assert r["Cache-Control"] == "private, no-store"
     assert b"".join(r.streaming_content).startswith(b"%PDF-")
     r = client.get(f"/chung-tu/{pdf_doc.pk}/xem/")
     b"".join(r.streaming_content)
@@ -166,3 +168,10 @@ def test_inline_forces_attachment_for_office_files(client, owner, req):
     r = client.get(f"/chung-tu/{d.pk}/xem/")
     b"".join(r.streaming_content)
     assert r["Content-Disposition"].startswith("attachment")
+
+
+def test_path_outside_media_root_is_404(client, owner, pdf_doc, settings):
+    (settings.MEDIA_ROOT.parent / "x").write_bytes(b"%PDF-secret")
+    Document.objects.filter(pk=pdf_doc.pk).update(stored_path="../x")
+    login(client, owner)
+    assert client.get(f"/chung-tu/{pdf_doc.pk}/tai-ve/").status_code == 404
