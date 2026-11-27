@@ -2,7 +2,11 @@
 
 Chính sách (ApprovalPolicy → PolicyRule → RuleStep) bất biến kể từ khi có WorkflowInstance tham
 chiếu: mọi `save`/`delete` (kể cả qua QuerySet `update`/`delete`) đều raise `PermissionError`.
-Muốn đổi thì tạo phiên bản mới bằng `ApprovalPolicy.clone_as_new_version`.
+Muốn đổi thì tạo phiên bản mới bằng `ApprovalPolicy.clone_as_new_version`. Ngoại lệ duy nhất:
+ngừng/bật lại một chính sách đã dùng bằng `policy.save(update_fields=["is_active"])` (snapshot đã
+bảo vệ các hồ sơ đang chạy).
+
+`Delegation`: uỷ quyền duyệt thay (spec 7.2); quy tắc áp dụng nằm ở `apps.workflow.delegation`.
 """
 
 from django.conf import settings
@@ -13,7 +17,8 @@ from django.db import models, transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.documents.models import DOC_TYPES
+from apps.audit import service as audit
+from apps.documents.models import DELEGATION_LETTER, DOC_TYPES
 
 REQUISITION, BUDGET_CHANGE = "requisition", "budget_change"
 SUBJECT_KINDS = [(REQUISITION, "Tờ trình mua sắm"), (BUDGET_CHANGE, "Đề nghị bổ sung/điều chuyển ngân sách")]
@@ -138,6 +143,12 @@ class ApprovalPolicy(_ImmutableWhenUsed):
 
     def _policy_id(self):
         return self.pk
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if self.pk is not None and update_fields is not None and set(update_fields) == {"is_active"}:
+            return models.Model.save(self, *args, **kwargs)  # chỉ ngừng/bật lại: được phép kể cả khi đã dùng
+        return super().save(*args, **kwargs)
 
     @transaction.atomic
     def clone_as_new_version(self, effective_from) -> "ApprovalPolicy":
@@ -264,6 +275,9 @@ class WorkflowTask(models.Model):
     status = models.CharField("Trạng thái", max_length=20, choices=TASK_STATUSES, default=WAITING)
     opened_at = models.DateTimeField("Thời điểm đến lượt", null=True, blank=True)
     due_at = models.DateTimeField("Hạn xử lý", null=True, blank=True)
+    reminded_at = models.DateTimeField("Đã nhắc hạn lúc", null=True, blank=True)
+    overdue_notified_at = models.DateTimeField("Đã báo quá hạn lúc", null=True, blank=True)
+    escalated_at = models.DateTimeField("Đã chuyển cấp lúc", null=True, blank=True)
     acted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="+"
     )
@@ -281,3 +295,71 @@ class WorkflowTask(models.Model):
 
     def __str__(self):
         return f"{self.instance_id}/{self.seq} {self.get_kind_display()} ({self.get_status_display()})"
+
+
+class Delegation(models.Model):
+    """Uỷ quyền duyệt thay: `delegate` xử lý thay `delegator` trong khoảng ngày và phạm vi đã định.
+
+    `subject_kinds` rỗng = mọi loại hồ sơ; `org_unit` null = mọi đơn vị; `max_amount_vnd` null =
+    không giới hạn. Tạo qua `delegation.create_delegation` (kiểm tra + audit), thu hồi bằng `revoke`.
+    """
+
+    delegator = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="delegations_given",
+        verbose_name="Người uỷ quyền",
+    )
+    delegate = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="delegations_received",
+        verbose_name="Người nhận uỷ quyền",
+    )
+    start_date = models.DateField("Từ ngày")
+    end_date = models.DateField("Đến ngày")
+    max_amount_vnd = models.DecimalField(
+        "Hạn mức tối đa (VND)", max_digits=18, decimal_places=0, null=True, blank=True
+    )
+    subject_kinds = models.JSONField("Loại hồ sơ", default=list, blank=True)
+    org_unit = models.ForeignKey(
+        "accounts.OrgUnit", null=True, blank=True, on_delete=models.PROTECT, related_name="+",
+        verbose_name="Phòng ban",
+    )
+    letter = models.ForeignKey(
+        "documents.Document", null=True, blank=True, on_delete=models.PROTECT, related_name="+",
+        verbose_name="Văn bản uỷ quyền",
+    )
+    created_at = models.DateTimeField("Tạo lúc", default=timezone.now)
+    revoked_at = models.DateTimeField("Thu hồi lúc", null=True, blank=True)
+
+    class Meta:
+        ordering = ["-start_date", "pk"]
+        verbose_name = "Uỷ quyền duyệt thay"
+        verbose_name_plural = "Uỷ quyền duyệt thay"
+        indexes = [models.Index(fields=["delegate", "start_date", "end_date"], name="wf_delegation_active_idx")]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(delegate=models.F("delegator")), name="delegation_not_self",
+                violation_error_message="Không thể uỷ quyền cho chính mình",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(end_date__gte=models.F("start_date")), name="delegation_end_after_start",
+                violation_error_message="Ngày kết thúc phải từ ngày bắt đầu trở đi",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Uỷ quyền #{self.pk}: {self.delegator} → {self.delegate}"
+
+    def clean(self):
+        valid = {code for code, _ in SUBJECT_KINDS}
+        if not isinstance(self.subject_kinds, list) or not set(self.subject_kinds) <= valid:
+            raise ValidationError({"subject_kinds": "Loại hồ sơ không hợp lệ"})
+        if self.letter_id is not None and self.letter.doc_type != DELEGATION_LETTER:
+            raise ValidationError({"letter": "Văn bản đính kèm phải là chứng từ loại Giấy ủy quyền"})
+
+    @transaction.atomic
+    def revoke(self, user) -> None:
+        locked = Delegation.objects.select_for_update().get(pk=self.pk)
+        if locked.revoked_at is not None:
+            raise ValidationError("Uỷ quyền đã bị thu hồi")
+        self.revoked_at = locked.revoked_at = timezone.now()
+        locked.save(update_fields=["revoked_at"])
+        audit.record("delegation.revoked", locked, actor=user, changes={"revoked_at": locked.revoked_at})

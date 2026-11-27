@@ -164,7 +164,7 @@ APP_ENCRYPTION_KEY = env("APP_ENCRYPTION_KEY")
 TRUSTED_PROXY_COUNT = int(env("TRUSTED_PROXY_COUNT", "0"))
 
 # Worker: (đường dẫn dotted tới hàm nhận `now`, chu kỳ giây). Task 11 bổ sung job SLA.
-WORKER_PERIODIC_JOBS = [("apps.notifications.outbox.process_due", 30)]
+WORKER_PERIODIC_JOBS = [("apps.notifications.outbox.process_due", 30), ("apps.workflow.sla.process_sla", 300)]
 
 # Địa chỉ gốc dùng dựng liên kết tuyệt đối trong email
 SITE_URL = env("SITE_URL", "http://localhost:8000").rstrip("/")

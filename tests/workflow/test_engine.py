@@ -185,7 +185,7 @@ def test_candidates_evaluated_at_act_time(db, running_instance, org):
     assert act(task, newcomer, "APPROVE").status == "APPROVED"
 
 
-def test_on_behalf_of_not_supported_yet(db, running_instance, org):
+def test_on_behalf_of_without_delegation_not_allowed(db, running_instance, org):
     with pytest.raises(NotAllowed):
         act(task_of(running_instance, "BUDGET_OWNER", org_unit=org.itd), org.owner_itd, "APPROVE",
             on_behalf_of=org.owner_adm)
@@ -499,6 +499,22 @@ def test_used_policy_is_immutable(db, running_instance, in_budget_policy):
         PolicyRule.objects.filter(policy=in_budget_policy).delete()
     with pytest.raises(PermissionError, match=msg):
         ApprovalPolicy.objects.filter(pk=in_budget_policy.pk).update(is_active=False)
+
+
+def test_used_policy_can_be_deactivated_only(db, running_instance, in_budget_policy):
+    msg = "Chính sách đã được sử dụng; hãy tạo phiên bản mới"
+    in_budget_policy.is_active = False
+    in_budget_policy.save(update_fields=["is_active"])
+    in_budget_policy.refresh_from_db()
+    assert in_budget_policy.is_active is False
+    in_budget_policy.is_active = True
+    in_budget_policy.code = "DOI_MA"
+    with pytest.raises(PermissionError, match=msg):
+        in_budget_policy.save(update_fields=["is_active", "code"])
+    with pytest.raises(PermissionError, match=msg):
+        in_budget_policy.save()
+    in_budget_policy.refresh_from_db()
+    assert in_budget_policy.code == "TRONG_NGAN_SACH" and in_budget_policy.is_active is False
 
 
 def test_unused_policy_is_editable(db, in_budget_policy):

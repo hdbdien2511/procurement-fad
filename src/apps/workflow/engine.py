@@ -7,14 +7,17 @@ luôn đi theo thứ tự:
 1. `select_for_update` instance rồi task (luôn instance trước task);
 2. kiểm tra hợp lệ;
 3. cập nhật trạng thái task, mở seq kế;
-4. nếu hồ sơ kết thúc → gọi `subject.on_workflow_finished(status)` (callback có thể khoá dòng
+4. chèn thông báo/email (chỉ INSERT, không khoá dòng) cho các bước vừa mở còn chờ xử lý và, nếu
+   hồ sơ kết thúc, kết quả cho người nộp;
+5. nếu hồ sơ kết thúc → gọi `subject.on_workflow_finished(status)` (callback có thể khoá dòng
    ngân sách và tự ghi audit của nó ở cuối);
-5. SAU CÙNG mới ghi các bản audit `workflow.*` đã gom lại.
+6. SAU CÙNG mới ghi các bản audit `workflow.*` đã gom lại.
 
 Sau khi khởi tạo, engine chỉ đi theo `instance.snapshot` và các task đã sinh, không đọc lại
 chính sách live.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.contenttypes.models import ContentType
@@ -24,8 +27,9 @@ from django.utils import timezone
 from apps.audit import service as audit
 from apps.core.services import get_setting
 from apps.documents.models import DOC_TYPES, MEETING_MINUTES, Document
+from apps.notifications.outbox import notify
 
-from . import resolver
+from . import delegation, resolver
 from .exceptions import (  # noqa: F401  (re-export: engine.NotAllowed, ...)
     AlreadyProcessed,
     Misconfigured,
@@ -40,6 +44,7 @@ from .models import (
     APPROVED,
     BUDGET_CHANGE,
     COMMENTED,
+    INSTANCE_STATUSES,
     MEETING,
     PENDING,
     PROPOSE,
@@ -152,15 +157,53 @@ def candidates(task):
 
 
 def _resolve_actor(task, user, on_behalf_of):
-    """Điểm mở rộng cho duyệt thay (Task 11): trả về người có thẩm quyền mà `user` hành động thay.
+    """Trả `(người có thẩm quyền, uỷ quyền | None)` mà `user` dùng để xử lý `task`.
 
-    Ở bước này chưa hỗ trợ duyệt thay.
-    TODO(Task 11): khi có uỷ quyền, kiểm tra CẢ người nhận uỷ quyền (`user`) lẫn người uỷ quyền
-    (principal) với `resolver.barred_user_ids` và `resolver.sys_admin_ids`.
+    - Không chỉ định `on_behalf_of`: người xử lý trực tiếp được ưu tiên; nếu không phải, tự tìm uỷ
+      quyền hợp lệ (người uỷ quyền có pk nhỏ nhất).
+    - Có chỉ định: phải có uỷ quyền hợp lệ từ đúng người đó.
+    Cả người nhận lẫn người uỷ quyền đều bị kiểm tra phân tách nhiệm vụ (xem `delegation`).
     """
-    if on_behalf_of is not None:
-        raise NotAllowed("Chưa hỗ trợ duyệt thay")
-    return user
+    if on_behalf_of is None:
+        if candidates(task).filter(pk=user.pk).exists():
+            return user, None
+        found = delegation.find_delegation(user, task)
+        if found is None:
+            raise NotAllowed("Bạn không có quyền xử lý bước này")
+    else:
+        found = delegation.find_delegation(user, task, delegator=on_behalf_of)
+        if found is None:
+            raise NotAllowed("Không có uỷ quyền hợp lệ để xử lý thay người này")
+    return found.delegator, found
+
+
+# --- thông báo ------------------------------------------------------------------------------------
+
+def task_url(task) -> str:
+    return f"/viec/{task.pk}/"  # trang xử lý việc (giao diện làm ở task sau)
+
+
+def format_due(due_at) -> str:
+    return timezone.localtime(due_at).strftime("%d/%m/%Y %H:%M") if due_at else ""
+
+
+def task_recipients(task) -> list:
+    """Người xử lý trực tiếp + người nhận uỷ quyền hợp lệ của họ, tính tại thời điểm gọi."""
+    users = list(candidates(task).order_by("pk"))
+    seen = {u.pk for u in users}
+    users += [u for u in delegation.delegates_for(task).order_by("pk") if u.pk not in seen]
+    return users
+
+
+def _notify_opened(task, subject):
+    ho_so = str(subject)
+    if task.mandatory:
+        template, title = "OFFICIAL", f"Hồ sơ {ho_so} cần duyệt"
+    else:
+        template, title = "CONSULT", f"Xin ý kiến về hồ sơ {ho_so}"
+    for user in task_recipients(task):
+        notify(user, title, task_url(task), email_template=template,
+               context={"ho_so": ho_so, "han_xu_ly": format_due(task.due_at)})
 
 
 # --- tiến trình -----------------------------------------------------------------------------------
@@ -168,11 +211,14 @@ def _resolve_actor(task, user, on_behalf_of):
 class _Run:
     """Gom các thay đổi và bản audit trong một lần `start`/`act` để ghi audit sau cùng."""
 
-    def __init__(self, instance, actor, now):
+    def __init__(self, instance, actor, now, subject):
         self.instance = instance
         self.actor = actor
         self.now = now
+        self.subject = subject
         self.events: list[tuple[str, dict]] = []
+        self.opened: list[int] = []
+        self.notified = False
 
     def event(self, action, **changes):
         self.events.append((action, {"instance": self.instance.pk, **changes}))
@@ -186,9 +232,12 @@ def _skip(task, comment, now):
 
 
 def _open(task, run):
+    sla_hours = run.instance.snapshot["steps"][task.step_index].get("sla_hours")
     task.status = PENDING
     task.opened_at = run.now
-    task.save(update_fields=["status", "opened_at"])
+    task.due_at = run.now + timedelta(hours=sla_hours) if sla_hours else None
+    task.save(update_fields=["status", "opened_at", "due_at"])
+    run.opened.append(task.pk)
     if task.kind == PROPOSE and resolver.role_holders(task).filter(pk=run.instance.submitted_by_id).exists():
         _skip(task, PROPOSE_SKIP_COMMENT, run.now)
         run.event("workflow.task_skipped", task=task.pk, seq=task.seq, kind=task.kind, reason=PROPOSE_SKIP_COMMENT)
@@ -221,6 +270,25 @@ def _advance(run) -> bool:
         return gate is None
 
 
+def _send_notifications(run):
+    """Thông báo cho các bước mở trong lần chạy này còn đang chờ; kết quả cho người nộp nếu đã xong.
+
+    Chỉ INSERT (thông báo + outbox) nên đặt TRƯỚC callback kết thúc và các bản audit cuối.
+    """
+    if run.notified:
+        return
+    run.notified = True
+    for task in run.instance.tasks.filter(pk__in=run.opened, status=PENDING).order_by("seq", "pk"):
+        task.instance = run.instance
+        _notify_opened(task, run.subject)
+    instance = run.instance
+    if instance.status != RUNNING:
+        ho_so, ket_qua = str(run.subject), dict(INSTANCE_STATUSES)[instance.status]
+        url = run.subject.get_absolute_url() if hasattr(run.subject, "get_absolute_url") else "/"
+        notify(instance.submitted_by, f"Hồ sơ {ho_so}: {ket_qua}", url, email_template="RESULT",
+               context={"ho_so": ho_so, "ket_qua": ket_qua})
+
+
 def _finish(run, status, subject):
     instance = run.instance
     skipped = []
@@ -230,6 +298,7 @@ def _finish(run, status, subject):
     instance.status = status
     instance.finished_at = run.now
     instance.save(update_fields=["status", "finished_at"])
+    _send_notifications(run)
     subject.on_workflow_finished(status)
     run.event(f"workflow.{status.lower()}", status=status, skipped_tasks=skipped)
 
@@ -273,12 +342,13 @@ def start(subject, subject_kind: str, submitted_by) -> WorkflowInstance:
     if snapshot["skipped_steps"]:
         instance.save(update_fields=["snapshot"])
 
-    run = _Run(instance, submitted_by, now)
+    run = _Run(instance, submitted_by, now, subject)
     run.event("workflow.started", policy=policy.code, version=policy.version, rule=rule.label,
               amount_vnd=snapshot["context"]["amount_vnd"])
     if _advance(run):
         # không tự duyệt: mọi hồ sơ phải có ít nhất một bước bắt buộc do người xử lý
         raise NoApprover("Chính sách không còn bước duyệt bắt buộc nào — kiểm tra cấu hình")
+    _send_notifications(run)
     _flush_audit(run, subject)
     return instance
 
@@ -324,30 +394,37 @@ def act(task, user, decision: str, comment: str = "", *, on_behalf_of=None) -> W
     if task.status == WAITING:
         raise NotAllowed("Bước này chưa đến lượt xử lý")
 
-    principal = _resolve_actor(task, user, on_behalf_of)
     if user.pk in resolver.barred_user_ids(instance):
         raise NotAllowed("Không được duyệt hồ sơ do chính mình lập")
     if user.pk in resolver.sys_admin_ids():
         raise NotAllowed("Quản trị hệ thống không được duyệt nghiệp vụ")
-    if not candidates(task).filter(pk=principal.pk).exists():
-        raise NotAllowed("Bạn không có quyền xử lý bước này")
+    principal, used = _resolve_actor(task, user, on_behalf_of)
     comment = (comment or "").strip()
     _validate_decision(instance, task, decision, comment)
 
     now = timezone.now()
     task.status = _FINAL_STATUS[decision]
     task.acted_by = user
+    task.on_behalf_of = principal if used else None
     task.comment = comment
     task.acted_at = now
-    task.save(update_fields=["status", "acted_by", "comment", "acted_at"])
+    task.save(update_fields=["status", "acted_by", "on_behalf_of", "comment", "acted_at"])
 
-    run = _Run(instance, user, now)
-    run.event("workflow.task_acted", task=task.pk, seq=task.seq, kind=task.kind,
-              decision=decision, comment=comment)
     subject = instance.subject
+    run = _Run(instance, user, now, subject)
+    extra = {}
+    if used:
+        extra = {
+            "on_behalf_of": principal.get_username(),
+            "delegation_id": used.pk,
+            "note": f"{user.get_username()} duyệt thay {principal.get_username()} theo uỷ quyền số {used.pk}",
+        }
+    run.event("workflow.task_acted", task=task.pk, seq=task.seq, kind=task.kind,
+              decision=decision, comment=comment, **extra)
     if decision in ("REJECT", "RETURN"):
         _finish(run, task.status, subject)
     elif decision == APPROVE and _advance(run):
         _finish(run, APPROVED, subject)
+    _send_notifications(run)
     _flush_audit(run, subject)
     return task
