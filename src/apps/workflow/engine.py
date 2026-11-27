@@ -116,6 +116,8 @@ def _normalize_context(raw: dict) -> dict:
         "consult_unit_ids": [int(i) for i in raw.get("consult_unit_ids") or []],
         "requester_unit_id": raw.get("requester_unit_id"),
         "created_by_id": raw.get("created_by_id"),
+        "requester_id": raw.get("requester_id"),
+        "extra_barred_ids": [int(i) for i in raw.get("extra_barred_ids") or []],
     }
 
 

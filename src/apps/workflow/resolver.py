@@ -4,7 +4,7 @@
   `BUDGET_UNIT` / `SELECTED_UNITS` sinh một nhánh cho mỗi id trong ngữ cảnh (có thể rỗng).
 - `role_holders` / `candidates`: luôn tính tại thời điểm gọi (không lưu đệm); chỉ dựa trên phân
   công vai trò, không bao giờ xét `is_superuser` / `is_staff`.
-- Phân tách nhiệm vụ cứng: người nộp/người tạo hồ sơ và MỌI người đang giữ `SYS_ADMIN` (toàn công
+- Phân tách nhiệm vụ cứng: người nộp/người tạo/người đề nghị hồ sơ và MỌI người đang giữ `SYS_ADMIN` (toàn công
   ty hay theo đơn vị) không bao giờ là người xử lý, kể cả khi có thêm vai trò nghiệp vụ.
 """
 
@@ -48,8 +48,11 @@ def expand_step(step: dict, ctx: dict) -> list[tuple[str, int | None]]:
 
 
 def barred_user_ids(instance) -> set[int]:
-    """Người nộp và người tạo hồ sơ: không được xử lý bất kỳ bước nào của hồ sơ."""
-    ids = {instance.submitted_by_id, instance.snapshot["context"].get("created_by_id")}
+    """Người nộp, người tạo, người đề nghị hồ sơ và `extra_barred_ids` (ví dụ người tạo/đề nghị các
+    phiên bản trước): không được xử lý bất kỳ bước nào của hồ sơ. Khoá thiếu trong ngữ cảnh = không có."""
+    ctx = instance.snapshot["context"]
+    ids = {instance.submitted_by_id, ctx.get("created_by_id"), ctx.get("requester_id"),
+           *(ctx.get("extra_barred_ids") or [])}
     return {i for i in ids if i is not None}
 
 

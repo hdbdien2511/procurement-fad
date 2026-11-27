@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from freezegun import freeze_time
 
 from apps.accounts import roles as R
 from apps.budget.ledger import post
@@ -12,6 +13,13 @@ from tests.factories import UserFactory
 from tests.workflow.conftest import grant, in_budget_policy, org, past, requester  # noqa: F401  (fixtures)
 
 QUOTE_REASON = "Chỉ có một nhà cung cấp độc quyền"
+TODAY = "2026-11-27 10:00:00+07:00"  # số tờ trình theo năm, tỷ giá theo ngày nộp
+
+
+@pytest.fixture(autouse=True)
+def frozen_today():
+    with freeze_time(TODAY, tick=True):
+        yield
 
 
 @pytest.fixture
@@ -29,15 +37,15 @@ def budget(org):
 
 
 def make_requisition(org, line, amount, *, currency="VND", quote_reason=QUOTE_REASON, funding=None,
-                     service_start=date(2026, 1, 1), months=1, **extra):
+                     service_start=date(2026, 1, 1), months=1, requester=None, created_by=None, **extra):
     """Tờ trình nháp một dòng hàng `amount` (đã gồm VAT 0%), phân bổ toàn bộ vào `line`."""
     from apps.requisitions.models import Requisition, RequisitionFunding, RequisitionLine
 
     req = Requisition.objects.create(
-        title="Mua máy tính", requester=org.requester, requester_unit=org.req_unit,
+        title="Mua máy tính", requester=requester or org.requester,
         procurement_type="BAU", necessity="Thay thế máy hỏng", currency=currency,
         service_start=service_start, months=months, quote_exception_reason=quote_reason,
-        created_by=org.requester, **extra,
+        created_by=created_by or requester or org.requester, **extra,
     )
     RequisitionLine.objects.create(
         requisition=req, description="Máy tính", quantity=Decimal("1"), unit_price=Decimal(amount),

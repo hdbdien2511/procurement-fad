@@ -3,12 +3,19 @@ from decimal import Decimal
 
 import pytest
 from django.utils import timezone
+from freezegun import freeze_time
 
 from apps.accounts.models import OrgUnit
 from apps.budget.models import BudgetLine, CostCode, Location, Project
 from apps.requisitions.models import Requisition, RequisitionFunding
 from apps.vendors.models import Vendor
 from apps.workflow.splitting import split_warnings
+
+
+@pytest.fixture(autouse=True)
+def frozen_today():
+    with freeze_time("2026-11-27 10:00:00+07:00", tick=True):
+        yield
 
 
 @pytest.fixture
@@ -26,13 +33,15 @@ def vendor(db):
 
 def make(org, *, number, vendor=None, line=None, unit=None, days_ago=0, status="IN_APPROVAL", amount=80_000_000):
     req = Requisition.objects.create(
-        number=number, title="Mua thiết bị", requester=org.requester, requester_unit=unit or org.req_unit,
-        procurement_type="BAU", currency="VND", total_original=Decimal(amount), total_vnd=Decimal(amount),
-        service_start=date(2026, 1, 1), months=1, vendor=vendor, status=status, created_by=org.requester,
+        title="Mua thiết bị", requester=org.requester, procurement_type="BAU", currency="VND",
+        service_start=date(2026, 1, 1), months=1, vendor=vendor, created_by=org.requester,
     )
-    Requisition.objects.filter(pk=req.pk).update(created_at=timezone.now() - timedelta(days=days_ago))
     if line is not None:
         RequisitionFunding.objects.create(requisition=req, budget_line=line, amount_vnd=Decimal(amount))
+    Requisition.objects.filter(pk=req.pk).update(  # trạng thái sau khi nộp
+        number=number, status=status, requester_unit=unit or org.req_unit, total_original=Decimal(amount),
+        total_vnd=Decimal(amount), created_at=timezone.now() - timedelta(days=days_ago),
+    )
     req.refresh_from_db()
     return req
 

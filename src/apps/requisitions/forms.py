@@ -11,7 +11,7 @@ class RequisitionForm(forms.ModelForm):
     class Meta:
         model = Requisition
         fields = [
-            "title", "requester_unit", "procurement_type", "necessity", "currency", "service_start", "months",
+            "title", "procurement_type", "necessity", "currency", "service_start", "months",
             "vendor", "quote_exception_reason", "consult_units",
         ]
         widgets = {

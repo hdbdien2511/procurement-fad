@@ -47,7 +47,7 @@ from .models import (
 REQUIRED_QUOTES = 3
 NUMBER_PREFIX = "TT"
 _HEADER_FIELDS = (
-    "title", "requester_id", "requester_unit_id", "procurement_type", "necessity", "currency",
+    "title", "requester_id", "procurement_type", "necessity", "currency",
     "service_start", "months", "vendor_id", "quote_exception_reason",
 )
 
@@ -103,6 +103,8 @@ def validate_for_submit(req) -> list[str]:
     errors = []
     if req.status != DRAFT:
         errors.append("Chỉ nộp được tờ trình ở trạng thái nháp")
+    if req.requester.org_unit_id is None:
+        errors.append("Người đề nghị chưa thuộc đơn vị nào")
     if not req.lines.exists():
         errors.append("Cần ít nhất một dòng hàng")
     else:
@@ -112,7 +114,9 @@ def validate_for_submit(req) -> list[str]:
             errors.append(str(e))
         else:
             funded = sum((f.amount_vnd for f in req.fundings.all()), Decimal("0"))
-            if funded != total_vnd:
+            if total_vnd <= 0:
+                errors.append("Tổng tiền tờ trình phải lớn hơn 0")
+            elif funded != total_vnd:
                 errors.append(
                     f"Tổng phân bổ ngân sách ({format_vnd(funded)}) khác tổng tờ trình ({format_vnd(total_vnd)})"
                 )
@@ -160,7 +164,8 @@ def submit(req, user) -> WorkflowInstance:
     if not locked.number:
         locked.number = next_number(NUMBER_PREFIX, today.year)
     locked.status = IN_APPROVAL
-    locked.save(update_fields=["total_original", "total_vnd", "fx_rate", "number", "status"])
+    locked.requester_unit_id = locked.requester.org_unit_id  # đơn vị người đề nghị tại ngày nộp
+    locked.save(update_fields=["total_original", "total_vnd", "fx_rate", "number", "status", "requester_unit"])
 
     instance = engine.start(locked, "requisition", user)
     audit.record("requisition.submitted", locked, actor=user, changes={
@@ -173,6 +178,15 @@ def submit(req, user) -> WorkflowInstance:
 
 
 # --- kết thúc luồng duyệt / giữ chỗ ----------------------------------------------------------------
+
+FUNDING_MISMATCH = "Tổng phân bổ ngân sách khác tổng tờ trình đã duyệt — không giữ chỗ ngân sách"
+
+
+def _funding_matches_total(req) -> bool:
+    """Giữ chỗ chỉ khi Σ phân bổ = tổng VND đã duyệt > 0 (không giữ chỗ khác số đã duyệt)."""
+    funded = sum((f.amount_vnd for f in req.fundings.all()), Decimal("0"))
+    return req.total_vnd > 0 and funded == req.total_vnd
+
 
 def _try_reserve(req, user) -> list[str] | None:
     """Giữ chỗ theo phân bổ; trả cảnh báo, hoặc None nếu thiếu ngân sách (không ghi gì)."""
@@ -197,9 +211,14 @@ def on_workflow_finished(req, status: str) -> None:
     """Callback của engine (trong transaction của `engine.act`, instance đã được khoá)."""
     locked = _lock(req)
     old = locked.status
-    warnings = []
+    warnings, note = [], ""
     if status == WF_APPROVED:
-        result = _try_reserve(locked, None)  # thao tác hệ thống khi hồ sơ được duyệt xong
+        if not _funding_matches_total(locked):
+            result, note = None, FUNDING_MISMATCH
+        else:
+            result = _try_reserve(locked, None)  # thao tác hệ thống khi hồ sơ được duyệt xong
+            if result is None:
+                note = "Không đủ ngân sách khả dụng — chưa giữ chỗ"
         if result is None:
             locked.status = BUDGET_BLOCKED
             _notify_budget_blocked(locked)
@@ -213,7 +232,7 @@ def on_workflow_finished(req, status: str) -> None:
         raise ValueError(f"Kết quả luồng duyệt không hợp lệ: {status}")
     locked.save(update_fields=["status"])
     audit.record("requisition.status_changed", locked, changes={
-        "status": [old, locked.status], "workflow_status": status, "budget_warnings": warnings,
+        "status": [old, locked.status], "workflow_status": status, "budget_warnings": warnings, "note": note,
     })
     _sync(req, locked)
 
@@ -226,6 +245,8 @@ def retry_reserve(req, user) -> list[str]:
     locked = _lock(req)
     if locked.status != BUDGET_BLOCKED:
         raise RequisitionError("Tờ trình không ở trạng thái chờ giữ chỗ ngân sách")
+    if not _funding_matches_total(locked):
+        raise RequisitionError(FUNDING_MISMATCH)
     warnings = ledger.reserve(locked.budget_allocations(), start=locked.reserve_start, months=locked.months,
                               source=locked, user=user)
     locked.status = APPROVED
@@ -340,7 +361,6 @@ def copy_as_new(req, user) -> Requisition:
     """Sao chép thành tờ trình nháp mới (R78): dòng hàng, phân bổ, đơn vị tham vấn; không chứng từ."""
     if not req.visible_to(user):
         raise RequisitionError("Bạn không có quyền xem tờ trình này")
-    new = _new_from(req, user, requester_id=user.pk,
-                    requester_unit_id=user.org_unit_id or req.requester_unit_id)
+    new = _new_from(req, user, requester_id=user.pk)  # đơn vị đề nghị = đơn vị của người sao chép
     audit.record("requisition.copied", new, actor=user, changes={"source": req.pk})
     return new

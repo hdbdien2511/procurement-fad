@@ -141,4 +141,20 @@ def test_header_form_offers_only_active_vendors(db):
     form = RequisitionForm()
     assert list(form.fields["vendor"].queryset) == [active]
     assert form.fields["service_start"].label == "Ngày bắt đầu dịch vụ"
-    assert "status" not in form.fields and "number" not in form.fields
+    assert not {"status", "number", "requester_unit"} & set(form.fields)
+
+
+def test_requester_unit_derived_from_requester(db, org, budget, in_budget_policy):
+    from tests.factories import UserFactory
+
+    req = make_requisition(org, budget.line, 50_000_000)
+    assert req.requester_unit_id == org.requester.org_unit_id
+    nobody = UserFactory(username="no_unit")
+    orphan = make_requisition(org, budget.line, 50_000_000, requester=nobody)
+    assert orphan.requester_unit_id is None
+    assert "Người đề nghị chưa thuộc đơn vị nào" in validate_for_submit(orphan)
+
+
+def test_zero_total_blocked(db, org, budget, in_budget_policy):
+    req = make_requisition(org, None, 0)
+    assert "Tổng tiền tờ trình phải lớn hơn 0" in validate_for_submit(req)

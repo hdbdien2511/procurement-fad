@@ -3,13 +3,15 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
+from django.db import connection
 
+from apps.accounts import roles as R
 from apps.audit.models import AuditEvent
 from apps.budget.ledger import InsufficientBudget, balance, post, reserve
 from apps.budget.models import ADJUST, RELEASE, RESERVE, BudgetEntry
 from apps.documents.models import QUOTE, Document
 from apps.notifications.models import Notification
-from apps.requisitions.models import Requisition
+from apps.requisitions.models import Requisition, RequisitionFunding
 from apps.requisitions.services import (
     RequisitionError,
     cancel,
@@ -19,11 +21,12 @@ from apps.requisitions.services import (
     submit,
 )
 from apps.workflow import resolver
-from apps.workflow.engine import act
+from apps.workflow.engine import NotAllowed, act
 from apps.workflow.models import CANCELLED, SKIPPED
 from tests.factories import UserFactory
 from tests.requisitions.conftest import approve_all, make_requisition, pending_task
 from tests.testapp.models import Dummy
+from tests.workflow.conftest import grant
 
 
 def reserved_entries(req):
@@ -160,18 +163,106 @@ def test_copy_as_new(db, returned_req, requester):
 
 
 def test_visible_to(db, submitted_req, org, budget):
-    instance = submitted_req.workflow_instances().get()
-    owner_task = instance.tasks.get(kind="BUDGET_OWNER")
     assert submitted_req.visible_to(org.requester)
     assert submitted_req.visible_to(org.dept_head)          # cùng phòng
-    assert submitted_req.visible_to(org.owner_itd)          # đơn vị quản lý ngân sách / người xử lý
+    assert submitted_req.visible_to(org.owner_itd)          # người xử lý bước BUDGET_OWNER
     assert submitted_req.visible_to(org.fad)                # FAD
     assert submitted_req.visible_to(budget.admin)
     assert not submitted_req.visible_to(org.owner_adm)
     assert not submitted_req.visible_to(org.consultant)
-    outsider = UserFactory(username="outsider", org_unit=org.itd)  # thuộc đơn vị quản lý ngân sách
-    assert submitted_req.visible_to(outsider)
-    assert owner_task.status == "PENDING"
+    outsider = UserFactory(username="outsider", org_unit=org.itd)  # thành viên đơn vị quản lý, không có vai trò
+    assert not submitted_req.visible_to(outsider)
+
+
+def test_budget_owner_sees_draft_but_plain_member_does_not(db, ready_req, org):
+    member = UserFactory(username="itd_member", org_unit=org.itd)
+    assert ready_req.visible_to(org.owner_itd)              # BUDGET_OWNER của đơn vị quản lý (chưa có luồng)
+    assert not ready_req.visible_to(member)
+    assert not ready_req.visible_to(org.owner_adm)
+
+
+def test_visible_queryset_matches_object_check(db, submitted_req, ready_req, org, budget):
+    users = [org.requester, org.dept_head, org.owner_itd, org.owner_adm, org.consultant, org.fad, org.gddh,
+             org.sysadmin, budget.admin, UserFactory(username="itd_member", org_unit=org.itd)]
+    for user in users:
+        listed = set(Requisition.objects.visible_to(user).values_list("pk", flat=True))
+        assert listed == {r.pk for r in (submitted_req, ready_req) if r.visible_to(user)}, user.username
+    assert set(Requisition.objects.visible_to(org.owner_itd).values_list("pk", flat=True)) == {
+        submitted_req.pk, ready_req.pk
+    }
+    assert not Requisition.objects.visible_to(org.owner_adm).exists()
+
+
+def test_delegate_sees_pending_requisition(db, submitted_req, org):
+    from apps.workflow.delegation import create_delegation
+
+    deputy = UserFactory(username="deputy")
+    assert not submitted_req.visible_to(deputy)
+    create_delegation(org.owner_itd, deputy, start_date=date(2026, 11, 1), end_date=date(2026, 12, 31))
+    assert submitted_req.visible_to(deputy)
+
+
+def test_requester_cannot_approve_when_creator_differs(db, org, budget, in_budget_policy):
+    # người tạo = requester (DEMO-A), người đề nghị = trưởng phòng DEMO-A (người duyệt bước cuối)
+    req = make_requisition(org, budget.line, 50_000_000, requester=org.dept_head, created_by=org.requester)
+    instance = submit(req, org.requester)
+    for kind in ("BUDGET_OWNER", "FAD_PRECHECK"):
+        task = pending_task(instance)
+        assert task.kind == kind
+        act(task, resolver.candidates(task).first(), "APPROVE")
+    task = pending_task(instance)
+    assert task.kind == "APPROVE"
+    assert not resolver.candidates(task).filter(pk=org.dept_head.pk).exists()
+    with pytest.raises(NotAllowed):
+        act(task, org.dept_head, "APPROVE")
+
+
+def test_original_creator_cannot_approve_revised_version(db, org, budget, in_budget_policy):
+    owner2 = grant(UserFactory(username="owner_itd_2", org_unit=org.itd), R.BUDGET_OWNER, org.itd)
+    v1 = make_requisition(org, budget.line, 50_000_000, created_by=org.owner_itd)  # người đề nghị: requester
+    instance = submit(v1, org.requester)
+    task = pending_task(instance)
+    act(task, owner2, "RETURN", "Bổ sung")
+    v2 = revise(v1, org.requester)
+    assert v2.created_by == org.requester
+    instance2 = submit(v2, org.requester)
+    task2 = pending_task(instance2)
+    assert task2.kind == "BUDGET_OWNER"
+    assert list(resolver.candidates(task2)) == [owner2]
+    with pytest.raises(NotAllowed):
+        act(task2, org.owner_itd, "APPROVE")
+
+
+def test_lines_and_fundings_locked_after_submit(db, submitted_req):
+    line, funding = submitted_req.lines.get(), submitted_req.fundings.get()
+    line.unit_price = Decimal("1")
+    with pytest.raises(PermissionError):
+        line.save()
+    with pytest.raises(PermissionError):
+        funding.delete()
+    with pytest.raises(PermissionError):
+        submitted_req.fundings.update(amount_vnd=1)
+    with pytest.raises(PermissionError):
+        RequisitionFunding.objects.bulk_create(
+            [RequisitionFunding(requisition=submitted_req, budget_line=funding.budget_line, amount_vnd=1)]
+        )
+    submitted_req.months = 12
+    with pytest.raises(PermissionError):
+        submitted_req.save()
+
+
+def test_mismatched_funding_at_approval_blocks_without_reserve(db, submitted_req, budget):
+    with connection.cursor() as cur:  # dữ liệu bị sửa ngoài ứng dụng
+        cur.execute("UPDATE requisitions_requisitionfunding SET amount_vnd = 1 WHERE requisition_id = %s",
+                    [submitted_req.pk])
+    approve_all(submitted_req.workflow_instances().get())
+    submitted_req.refresh_from_db()
+    assert submitted_req.status == "BUDGET_BLOCKED"
+    assert reserved_entries(submitted_req) == []
+    event = AuditEvent.objects.filter(action="requisition.status_changed").order_by("-id").first()
+    assert "khác tổng tờ trình" in event.changes["note"]
+    with pytest.raises(RequisitionError):
+        retry_reserve(submitted_req, budget.admin)
 
 
 def test_requisition_number_unique_per_version(db, submitted_req):

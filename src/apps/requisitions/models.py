@@ -14,10 +14,10 @@ from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.accounts.roles import AUDITOR, FAD_BUDGET_ADMIN, FAD_PRECHECK, has_role
 from apps.core.fx import to_vnd
-from apps.workflow import delegation, resolver
-from apps.workflow.models import PENDING, WorkflowInstance, WorkflowTask
+from apps.workflow.models import WorkflowInstance
+
+from .visibility import visibility_filter
 
 DRAFT, IN_APPROVAL, RETURNED, APPROVED, BUDGET_BLOCKED, REJECTED, CANCELLED = (
     "DRAFT", "IN_APPROVAL", "RETURNED", "APPROVED", "BUDGET_BLOCKED", "REJECTED", "CANCELLED"
@@ -34,7 +34,56 @@ STATUSES = [
 PROCUREMENT_TYPES = [("PROJECT", "Dự án"), ("BAU", "Thường xuyên (BAU)"), ("TRAVEL", "Công tác"), ("OTHER", "Khác")]
 
 CENT = Decimal("0.01")
-COMPANY_WIDE_ROLES = (FAD_PRECHECK, FAD_BUDGET_ADMIN, AUDITOR)
+# Trường hệ thống được ghi khi tờ trình đã rời trạng thái nháp (mọi trường khác bị khoá).
+SYSTEM_FIELDS = {"status", "number", "total_original", "total_vnd", "fx_rate"}
+LOCKED_MESSAGE = "Tờ trình đã nộp, không được sửa nội dung"
+
+
+class RequisitionQuerySet(models.QuerySet):
+    def visible_to(self, user):
+        q = visibility_filter(user)
+        return self if q is None else self.filter(q).distinct()
+
+
+def _parent_is_draft(requisition_ids) -> bool:
+    ids = set(requisition_ids)
+    return Requisition.objects.filter(pk__in=ids, status=DRAFT).count() == len(ids)
+
+
+class _DraftOnlyQuerySet(models.QuerySet):
+    """Dòng hàng / phân bổ chỉ được ghi khi tờ trình cha còn là nháp (kể cả thao tác hàng loạt)."""
+
+    def _guard(self, requisition_ids):
+        if not _parent_is_draft(requisition_ids):
+            raise PermissionError(LOCKED_MESSAGE)
+
+    def bulk_create(self, objs, *args, **kwargs):
+        objs = list(objs)
+        self._guard(o.requisition_id for o in objs)
+        return super().bulk_create(objs, *args, **kwargs)
+
+    def update(self, **kwargs):
+        self._guard(self.values_list("requisition_id", flat=True))
+        return super().update(**kwargs)
+
+    def delete(self):
+        self._guard(self.values_list("requisition_id", flat=True))
+        return super().delete()
+
+
+class _DraftOnly(models.Model):
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if not _parent_is_draft([self.requisition_id]):
+            raise PermissionError(LOCKED_MESSAGE)
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if not _parent_is_draft([self.requisition_id]):
+            raise PermissionError(LOCKED_MESSAGE)
+        return super().delete(*args, **kwargs)
 
 
 class Requisition(models.Model):
@@ -49,8 +98,9 @@ class Requisition(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+", verbose_name="Người đề nghị"
     )
     requester_unit = models.ForeignKey(
-        "accounts.OrgUnit", on_delete=models.PROTECT, related_name="+", verbose_name="Đơn vị đề nghị"
-    )
+        "accounts.OrgUnit", null=True, blank=True, on_delete=models.PROTECT, related_name="+", editable=False,
+        verbose_name="Đơn vị đề nghị",
+    )  # lấy từ đơn vị của người đề nghị khi còn nháp (không cho chọn)
     procurement_type = models.CharField("Loại mua sắm", max_length=10, choices=PROCUREMENT_TYPES)
     necessity = models.TextField("Sự cần thiết", blank=True)
     currency = models.CharField("Loại tiền", max_length=3, default="VND")
@@ -75,6 +125,8 @@ class Requisition(models.Model):
     )
     created_at = models.DateTimeField("Tạo lúc", default=timezone.now, editable=False)
 
+    objects = RequisitionQuerySet.as_manager()
+
     class Meta:
         ordering = ["-created_at", "-pk"]
         verbose_name = "Tờ trình mua sắm"
@@ -88,6 +140,22 @@ class Requisition(models.Model):
         if not self.number:
             return f"Tờ trình nháp #{self.pk}"
         return self.number if self.version == 1 else f"{self.number} (phiên bản {self.version})"
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        if not self._state.adding:
+            stored = Requisition.objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if stored not in (None, DRAFT) and (update_fields is None or not set(update_fields) <= SYSTEM_FIELDS):
+                raise PermissionError(LOCKED_MESSAGE)
+        if self.status == DRAFT and self.requester_id is not None:
+            from apps.accounts.models import User
+
+            self.requester_unit_id = User.objects.filter(pk=self.requester_id).values_list(
+                "org_unit_id", flat=True
+            ).first()
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "requester_unit"}
+        super().save(*args, **kwargs)
 
     # --- tiền ---
     def compute_totals(self, on: date) -> tuple[Decimal, Decimal, Decimal]:
@@ -124,7 +192,17 @@ class Requisition(models.Model):
             "consult_unit_ids": list(self.consult_units.order_by("pk").values_list("pk", flat=True)),
             "requester_unit_id": self.requester_unit_id,
             "created_by_id": self.created_by_id,
+            "requester_id": self.requester_id,
+            "extra_barred_ids": self.earlier_party_ids(),
         }
+
+    def earlier_party_ids(self) -> list[int]:
+        """Người tạo / người đề nghị của các phiên bản trước (cũng không được duyệt phiên bản này)."""
+        ids, prev = [], self.previous
+        while prev is not None:
+            ids += [prev.created_by_id, prev.requester_id]
+            prev = prev.previous
+        return sorted(set(ids) - {self.created_by_id, self.requester_id})
 
     def cumulative_amount_vnd(self, scope: str) -> Decimal:
         return self.total_vnd  # tờ trình không xét hạn mức luỹ kế
@@ -136,32 +214,13 @@ class Requisition(models.Model):
 
     # --- quyền xem ---
     def visible_to(self, user) -> bool:
-        """Người tạo/đề nghị, cùng đơn vị đề nghị, người xử lý (hoặc đã xử lý / nhận uỷ quyền) bước
-        duyệt, thành viên đơn vị quản lý ngân sách liên quan, FAD và Kiểm toán."""
-        if not user.is_authenticated:
-            return False
-        if user.pk in (self.created_by_id, self.requester_id):
-            return True
-        if user.org_unit_id is not None:
-            if user.org_unit_id == self.requester_unit_id:
-                return True
-            if self.fundings.filter(budget_line__budget_unit__managing_org_unit_id=user.org_unit_id).exists():
-                return True
-        if any(has_role(user, role) for role in COMPANY_WIDE_ROLES):
-            return True
-        tasks = WorkflowTask.objects.filter(instance__in=self.workflow_instances()).select_related("instance")
-        if tasks.filter(Q(acted_by=user) | Q(on_behalf_of=user)).exists():
-            return True
-        for task in tasks:
-            if resolver.candidates(task).filter(pk=user.pk).exists():
-                return True
-            if task.status == PENDING and delegation.delegates_for(task).filter(pk=user.pk).exists():
-                return True
-        return False
+        """Cùng quy tắc với `Requisition.objects.visible_to(user)` (xem `visibility`)."""
+        return Requisition.objects.visible_to(user).filter(pk=self.pk).exists()
 
 
-class RequisitionLine(models.Model):
+class RequisitionLine(_DraftOnly):
     requisition = models.ForeignKey(Requisition, on_delete=models.CASCADE, related_name="lines")
+    objects = _DraftOnlyQuerySet.as_manager()
     description = models.CharField("Mô tả hàng hoá/dịch vụ", max_length=500)
     quantity = models.DecimalField("Số lượng", max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
     unit_price = models.DecimalField("Đơn giá", max_digits=18, decimal_places=2, validators=[MinValueValidator(0)])
@@ -184,8 +243,9 @@ class RequisitionLine(models.Model):
         return Decimal(raw).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-class RequisitionFunding(models.Model):
+class RequisitionFunding(_DraftOnly):
     requisition = models.ForeignKey(Requisition, on_delete=models.CASCADE, related_name="fundings")
+    objects = _DraftOnlyQuerySet.as_manager()
     budget_line = models.ForeignKey(
         "budget.BudgetLine", on_delete=models.PROTECT, related_name="+", verbose_name="Dòng ngân sách"
     )

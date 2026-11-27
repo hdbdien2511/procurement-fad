@@ -88,7 +88,8 @@ def test_snapshot_contents(db, running_instance, org):
     assert snap["context"] == {
         "amount_vnd": "100000000", "budget_unit_ids": [org.bu_itd.pk, org.bu_adm.pk],
         "consult_unit_ids": [org.dti.pk], "requester_unit_id": org.req_unit.pk,
-        "created_by_id": org.requester.pk, "cumulative_after_vnd": None,
+        "created_by_id": org.requester.pk, "requester_id": None, "extra_barred_ids": [],
+        "cumulative_after_vnd": None,
     }
 
 
