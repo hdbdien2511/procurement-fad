@@ -1,67 +1,77 @@
 # Thiết kế: Nền tảng Procurement HSC (Đợt 1)
 
-- Ngày: 2026-11-27
+- Ngày: 2026-11-27 (cập nhật lần 2: bổ sung từ RFP eProcurement v0.2 và file As-is/To-be)
 - Trạng thái: BẢN NHÁP, chờ người dùng duyệt
 - Người sở hữu nghiệp vụ: Kế toán / FAD (người dùng)
-- Ghi chú ký hiệu: **[Đã chốt]** = người dùng quyết định; **[Đề xuất]** = Claude đề xuất, người dùng có thể sửa; **[Mở]** = chưa có câu trả lời.
+- Ký hiệu: **[Đã chốt]** = người dùng quyết định; **[RFP]** = lấy từ tài liệu RFP; **[Đề xuất]** = Claude đề xuất, người dùng có thể sửa; **[Mở]** = chưa có câu trả lời.
+- Tài liệu nguồn: `RFP_eProcurement_v0.2.docx`, `RFP_eProcurement_As_is__To_be.xlsx` (không lưu vào repo, xem 8.6). Mã `R1`…`R89` trong tài liệu này là số thứ tự tiêu chí ở sheet "5. Thang điểm".
 
 ---
 
+## 0. Quan hệ với RFP (CẦN LÀM RÕ TRƯỚC KHI DUYỆT)
+
+RFP do IT phát hành để **mua giải pháp từ vendor**. Bản thiết kế này là **tự xây**. Hai việc này phải có quan hệ rõ ràng, nếu không sẽ trùng lặp công sức hoặc gây khó xử với IT. **[Mở, mục 12 câu 1]**
+
+Cho đến khi có câu trả lời, bản thiết kế viết theo hướng: **bản mẫu tự xây bám sát yêu cầu RFP**, chọn tương đương **Option 2 của RFP** (giữ PAS làm thanh toán, tích hợp hai chiều) vì người dùng đã chốt giữ PAS.
+
 ## 1. Vì sao làm
 
-Hiện nay toàn bộ quy trình mua sắm tại HSC chạy bằng Excel, email và giấy tờ. Bước nào cũng chậm, tốn thời gian, và **không có audit trail**. Chỉ có khâu thanh toán được hỗ trợ bởi hệ thống PAS. **[Đã chốt]**
+Hiện HSC đã có PAS (lập/duyệt đề nghị thanh toán, chuyển tiền qua Bank Gateway), IMS (gửi dữ liệu hoá đơn sang PAS) và SUN (hạch toán). Các khâu còn lại (lập ngân sách, quản lý NCC, báo giá, tờ trình, hợp đồng, đặt hàng, nghiệm thu, đánh giá sau mua, báo cáo) làm thủ công, theo dõi bằng Excel (file Budget Control). **[RFP][Đã chốt]**
 
-Phần mềm này đưa toàn bộ vòng đời một hồ sơ mua sắm lên một hệ thống: ai cũng biết hồ sơ đang ở bước nào, chờ ai, bao lâu; mọi thao tác được ghi lại không sửa được; chứng từ nằm cùng hồ sơ.
+Hệ quả: bước nào cũng chậm, không có audit trail, khó giám sát ngân sách của các phòng ban, tra cứu và trích xuất chứng từ mất nhiều thời gian. Báo cáo PAS hạn chế: chưa có API, không tuỳ chỉnh được, phụ thuộc vendor. **[RFP]**
 
 ## 2. Mục tiêu, ngoài phạm vi, phản mục tiêu
 
 ### Mục tiêu
-1. Số hoá quy trình 11 bước (mục 4), chia làm nhiều đợt, đợt 1 là nền tảng. **[Đã chốt]**
-2. Luồng duyệt **cấu hình được**: ngưỡng tiền, lớp duyệt, đơn vị tham vấn là dữ liệu, không viết cứng trong code. Quy định chi tiết sẽ cung cấp sau. **[Đã chốt]**
-3. Audit trail đầy đủ, không sửa/xoá được, kể cả bởi quản trị viên.
-4. Đạt mức bảo mật để bộ phận CNTT HSC rà soát và tiếp nhận vận hành trên máy chủ nội bộ. **[Đã chốt]**
+1. Số hoá quy trình 11 bước (mục 4), chia nhiều đợt, đợt 1 là nền tảng. **[Đã chốt]**
+2. Luồng duyệt **cấu hình được**: ngưỡng, lớp duyệt, đơn vị tham vấn là dữ liệu, không viết cứng. HSC tự điều chỉnh khi quy trình thay đổi. **[Đã chốt][RFP]**
+3. Audit trail đầy đủ, không sửa/xoá được. **[RFP: R59, R86]**
+4. **Khắc phục hạn chế của PAS**: hiện số dư ngân sách và chặn/cảnh báo vượt, duyệt tự động theo hạn mức, hồ sơ nhiều nguồn ngân sách, báo cáo tuỳ chỉnh có API, đưa báo cáo Budget Control vào hệ thống. **[RFP]**
+5. Đạt mức an toàn thông tin cho công ty chứng khoán. Đây là **điều kiện loại** trong RFP, nên bản tự xây cũng phải đạt cùng mức đó. **[RFP: R61]**
 
-### Ngoài phạm vi (không làm)
-- Thực hiện thanh toán: vẫn trên **PAS**. Phần mềm chỉ chuẩn bị hồ sơ và nhận lại trạng thái. **[Đã chốt]**
-- Ghi sổ kế toán: vẫn trên **SUN**. Phần mềm chỉ xuất dữ liệu. **[Đã chốt]**
+### Ngoài phạm vi
+- Thực hiện thanh toán, chuyển tiền qua ngân hàng, đối soát sao kê, thay PAS (R38, R39, R40, R43: chỉ áp dụng Option 1). **[Đã chốt]**
+- Ghi sổ kế toán: vẫn ở SUN; hệ thống chỉ cung cấp dữ liệu. **[Đã chốt]**
+- Mở rộng "Công tác" (R54–R58, mức Nên có): để sau đợt 4. **[Đề xuất]**
 - Ứng dụng di động riêng (giao diện web vẫn dùng được trên điện thoại).
-- Đa tiền tệ ở đợt 1: chỉ VND. **[Đề xuất]**
 
-### Phản mục tiêu (dù chạy được vẫn coi là thất bại)
-- Người dùng quay lại email/giấy vì hệ thống chậm hoặc rườm rà hơn cách cũ.
-- Audit trail có thể bị sửa, hoặc có thao tác không được ghi.
-- Quy tắc duyệt phải nhờ lập trình viên sửa code mới đổi được.
-- Dữ liệu thật hoặc tài liệu nội bộ HSC nằm trên hạ tầng cá nhân (GitHub cá nhân, máy cá nhân).
+### Phản mục tiêu
+- Người dùng quay lại email/giấy vì hệ thống rườm rà hơn cách cũ.
+- Audit trail sửa được, hoặc có thao tác không được ghi.
+- Quy tắc duyệt phải sửa code mới đổi được.
+- Hai hệ thống (Procurement và PAS) lệch số liệu mà không ai phát hiện. Đây là rủi ro chính của Option 2. **[RFP]**
+- Dữ liệu thật hoặc tài liệu nội bộ HSC nằm trên hạ tầng cá nhân.
 
 ## 3. Ràng buộc
 
 | Ràng buộc | Nguồn |
 |---|---|
-| Triển khai trên máy chủ nội bộ HSC, truy cập trong mạng nội bộ/VPN | [Đã chốt] |
-| Người dùng (không chuyên IT) cùng Claude làm bản mẫu; IT tiếp nhận vận hành | [Đã chốt] |
-| Tích hợp: đăng nhập tài khoản công ty (SSO), SUN, PAS, email, Excel | [Đã chốt] |
-| Công ty chứng khoán: chịu quy định về an toàn hệ thống thông tin, bảo vệ dữ liệu cá nhân (Nghị định 13/2023/NĐ-CP; Luật Bảo vệ dữ liệu cá nhân 2025) và chính sách nội bộ HSC | Văn bản áp dụng cụ thể cần **Pháp chế/IT xác nhận** |
+| Máy chủ nội bộ HSC, truy cập qua mạng nội bộ/VPN | [Đã chốt] |
+| Người dùng cùng Claude làm bản mẫu; IT tiếp nhận vận hành | [Đã chốt] |
+| Tích hợp: SSO, SUN, PAS, IMS, email, Excel; HRIS (đợt sau) | [Đã chốt][RFP] |
+| PAS chưa có API; IMS và HRIS do FPT quản lý; một số mẫu mail PAS phụ thuộc VTIDC. Kết nối thật phụ thuộc bên thứ ba | [RFP] |
+| An toàn thông tin cho công ty chứng khoán; Nghị định 13/2023/NĐ-CP, Luật Bảo vệ dữ liệu cá nhân 2025; chính sách nội bộ HSC | Văn bản cụ thể cần **Pháp chế/IT xác nhận** |
 | Bản mẫu **chỉ dùng dữ liệu giả** | [Đề xuất] |
 
-## 4. Quy trình nghiệp vụ (đã xác nhận)
+## 4. Quy trình nghiệp vụ (đã xác nhận + RFP)
 
-| Giai đoạn | Bước | Người phụ trách chính |
-|---|---|---|
-| Chuẩn bị | 1. Ngân sách năm (FAD tổng hợp, CEO duyệt) | Khối/phòng ban |
-| | 2. Chọn NCC (có trong danh sách: dùng ngay; NCC mới: đánh giá → FAD tiền kiểm → Ban Mua Sắm duyệt) | Bộ phận đề nghị |
-| Xin duyệt | 3. Lập tờ trình kèm 03 báo giá | Người đề nghị |
-| | 4. Tham vấn chuyên môn (ITD, DTI, DATA, HRM, COM, GRC, tuỳ nội dung) → FAD tiền kiểm mọi tờ trình → duyệt 3 lớp | Kế toán kiểm soát |
-| | 5. Hợp đồng: soạn cùng NCC → FAD + Pháp chế rà soát → ký theo thẩm quyền | Người mua hàng |
-| Thực hiện | 6. Đặt hàng, nghiệm thu | Người mua hàng |
-| | 7. Đánh giá NCC sau mua (cùng FAD) | Bộ phận sử dụng |
-| Chi tiền, ghi sổ | 8. Hồ sơ thanh toán trên PAS; GĐNV/GĐĐH + CFO duyệt; FAD chuyển tiền | Bộ phận đề nghị |
-| | 9. Hạch toán trên SUN | Kế toán hạch toán |
-| Giám sát | 10. Đối soát, báo cáo | Kế toán kiểm soát |
-| | 11. Hậu kiểm hằng tháng, lưu chứng từ (Pháp chế tham gia khi cần) | Kế toán kiểm soát |
+| Giai đoạn | Bước | Nội dung chính | Hệ thống |
+|---|---|---|---|
+| Chuẩn bị | 1. Lập ngân sách | Lập theo Khối/Phòng/mã chi phí/dự án (căn cứ năm trước; giữ nguyên hoặc thay đổi/thêm dự án); duyệt; bổ sung; điều chỉnh/điều chuyển (có duyệt); dự báo theo thực chi | Mới |
+| | 2. NCC | Đăng ký, thẩm định; danh sách NCC đầu năm do BMS duyệt; đánh giá định kỳ/bổ sung; rủi ro, tạm ngưng, danh sách đen; khai báo xung đột lợi ích | Mới |
+| | 3. Tìm nguồn | Mô tả nhu cầu, yêu cầu kỹ thuật; tối thiểu 03 báo giá; chỉ mời NCC trong danh sách; RFQ/RFI, đấu thầu tập trung, đóng thầu tự động; so sánh giá và tiêu chí; **mua ngoại lệ** (khẩn cấp, chỉ định, NCC duy nhất) có luồng duyệt riêng | Mới |
+| Xin duyệt | 4. Tờ trình, tiền kiểm, duyệt | Tờ trình chủ trương/mua sắm theo mẫu; nhiều nguồn ngân sách (Công ty + Công đoàn); tham vấn chuyên môn; FAD tiền kiểm (ngân sách còn lại, thẩm quyền, tính hợp lý, tính cần thiết); trả lại nếu chưa đạt; **giữ chỗ ngân sách**; duyệt theo thẩm quyền, **duyệt thay khi vắng mặt**; trường hợp không cần tờ trình thì đi thẳng tới mua hàng | Mới |
+| | 5. Hợp đồng | Mua hàng / dịch vụ / nguyên tắc; soạn, đàm phán; Kế toán (FAD) + Pháp chế review; duyệt trước khi ký; ký số; lưu bản gốc; phụ lục; nhắc gia hạn trước 3–6 tháng; đợt thanh toán | Mới |
+| Thực hiện | 6. Mua sắm | Đơn đặt hàng; nhận hàng đủ/từng phần; nghiệm thu theo giai đoạn; điều chỉnh đơn, trả hàng; **hoàn trả ngân sách** phần không dùng | Mới |
+| | 7. Đánh giá sau mua | Khi hoàn thành hoặc sau chu kỳ (thường 1 năm); bảng điểm tiêu chí tuỳ biến; kết quả đưa vào đánh giá NCC năm sau | Mới |
+| Chi tiền, ghi sổ | 8. Thanh toán | Kế thừa chứng từ; đối chiếu 3 chiều (PO – nghiệm thu – hoá đơn); rà soát hoá đơn qua IMS; xử lý chênh lệch; **tạo hồ sơ trên PAS, nhận lại trạng thái** | PAS (giữ) + Mới |
+| | 9. Hạch toán | Hạch toán trên SUN; hệ thống cung cấp dữ liệu kỳ dịch vụ để trích trước/phân bổ, thông tin tài sản cố định | SUN (giữ) |
+| Giám sát | 10. Báo cáo | Chi tiêu/ngân sách, NCC, hợp đồng, tiết kiệm, tuân thủ (đủ 03 báo giá, ngoại lệ, quá hạn), timeline từng bước duyệt; tuỳ chỉnh, có API | Mới |
+| | 11. Hậu kiểm | Chọn mẫu, checklist, ghi nhận phát hiện, theo dõi khắc phục đến khi đóng; cung cấp chứng từ cho kiểm toán | Mới |
 
-**Ba lớp duyệt:** Lớp 1 GĐNV/GĐĐH → Lớp 2 Ban Mua Sắm (BMS) → Lớp 3 CEO (TGĐ); ngoài ra HĐQT ở mức cao nhất. Lớp trên chỉ vào khi vượt thẩm quyền lớp dưới.
+**Vai trò:** Bộ phận đề nghị (người đề nghị, thư ký, người mua hàng, bộ phận sử dụng); Owner budget; Tham vấn chuyên môn (ITD, DTI, DATA, HRM, COM, GRC); FAD (tiền kiểm, kiểm soát, hạch toán, hậu kiểm); 3 lớp duyệt: GĐNV/GĐĐH → Ban Mua Sắm (BMS) → CEO/TGĐ; HĐQT; CFO; Pháp chế (GRC).
 
-**Bảng thẩm quyền mẫu** (trích HSC_Chính sách Mua sắm, mục 7; dùng làm **dữ liệu mẫu** để kiểm thử bộ máy cấu hình, không viết cứng):
+**Bảng thẩm quyền mẫu** (trích HSC_Chính sách Mua sắm, mục 7; chỉ là **dữ liệu mẫu** để kiểm thử, không viết cứng):
 
 | Nhóm | Ngưỡng / tờ trình | Đề nghị | Tham vấn | Phê duyệt |
 |---|---|---|---|---|
@@ -73,101 +83,125 @@ Phần mềm này đưa toàn bộ vòng đời một hồ sơ mua sắm lên m�
 | | 300tr – 3 tỷ, luỹ kế < 2% chi phí cố định năm | GĐĐH | GĐĐH-TCKT | TGĐ |
 | | > 3 tỷ hoặc luỹ kế ≥ 2% | TGĐ | GĐĐH-TCKT | HĐQT |
 
-Duyệt thanh toán luôn là GĐĐH-TCKT (= GĐNV/GĐĐH + CFO, đã xác nhận).
+Duyệt thanh toán: GĐĐH-TCKT (= GĐNV/GĐĐH + CFO). Quy trình duyệt FAD trên chứng từ thanh toán: Kiểm soát 1 → Kiểm soát 2 → Phê duyệt → Thanh toán → Hoàn thành → Lưu kho hồ sơ. **[RFP]**
+
+### 4.1 Điểm chưa nhất quán giữa các tài liệu (cần chốt)
+1. **Chi phí ngoài ngân sách:** RFP ghi "hệ thống chặn và khuyến nghị trình bổ sung ngân sách", nhưng chính sách mua sắm lại có luồng duyệt riêng cho khoản "chưa có trong ngân sách". → Thiết kế hỗ trợ cả hai, chọn bằng cấu hình (chặn hẳn / cho đi luồng ngoài ngân sách). Cần FAD chốt mặc định. **[Mở]**
+2. **NCC ngoài danh sách:** RFP mục b ghi "Bổ sung NCC (>20tr) chuyển tới bước lựa chọn NCC, không qua quy trình phê duyệt bổ sung NCC", nhưng Phụ lục 2 và sơ đồ quy trình ghi "NCC ngoài danh sách phải có ngoại lệ được duyệt / NCC mới: FAD tiền kiểm → BMS duyệt". → Thiết kế theo hướng chặt hơn (phải duyệt), cấu hình được. **[Mở]**
 
 ## 5. Phương án công nghệ đã cân nhắc
 
 | Phương án | Ưu | Nhược | Kết quả |
 |---|---|---|---|
-| **A. Python (Django) + PostgreSQL** | Nhanh có bản mẫu; có sẵn trang quản trị, phân quyền, chống tấn công web phổ biến; code dễ đọc với người không chuyên; chạy Linux/Windows; có thể đổi sang SQL Server | IT HSC có thể phải học thêm nếu chỉ quen Microsoft | **Được chọn** [Đã chốt] |
-| B. .NET + SQL Server | Hợp hệ sinh thái Microsoft, nối AD thuận | Code dài, khó đọc với người dùng; tự làm trang quản trị; chậm hơn ~30–50% (ước lượng) | Không chọn |
-| C. Power Apps + SharePoint | Nhanh nhất, có sẵn M365 | Chạy cloud, trái yêu cầu máy chủ nội bộ; audit trail và hạn mức luỹ kế khó làm chặt; phí theo đầu người | Loại |
+| **A. Python (Django) + PostgreSQL** | Nhanh có bản mẫu; có sẵn trang quản trị, phân quyền, chống tấn công web phổ biến; code dễ đọc; chạy Linux/Windows; đổi được sang SQL Server | IT HSC có thể phải học thêm | **Được chọn** [Đã chốt] |
+| B. .NET + SQL Server | Hợp hệ sinh thái Microsoft, nối AD thuận | Code dài; tự làm trang quản trị; chậm hơn ~30–50% (ước lượng) | Không chọn |
+| C. Power Apps + SharePoint | Nhanh nhất, có sẵn M365 | Chạy cloud, trái yêu cầu máy chủ nội bộ; audit trail và luỹ kế khó làm chặt; phí theo đầu người | Loại |
 
-**Rủi ro đã chấp nhận:** chưa biết chuẩn công nghệ của IT HSC. Nếu IT bắt buộc .NET thì phải làm lại. Giảm thiểu: hỏi IT sớm (mục 11).
+Rủi ro đã chấp nhận: chưa biết chuẩn công nghệ của IT HSC. Giảm thiểu: hỏi IT sớm (mục 11).
 
 ## 6. Kiến trúc **[Đề xuất]**
 
 ```
-Trình duyệt (mạng nội bộ / VPN)
-        │ HTTPS
-   Nginx (reverse proxy, TLS, giới hạn tốc độ, header bảo mật)
-        │
-   Ứng dụng Django (Gunicorn)  ──►  PostgreSQL 16
-        │                            (dữ liệu + audit trail)
-        ├──► Kho file chứng từ (ổ đĩa riêng, ngoài thư mục web)
-        └──► Worker nền: gửi email, xuất file SUN/PAS (đọc bảng "outbox")
+                 MẠNG NỘI BỘ HSC / VPN
+Trình duyệt nhân viên ──HTTPS──► Nginx ──► Django (Gunicorn) ──► PostgreSQL 16
+                                              │                 (dữ liệu + audit + sổ ngân sách)
+                                              ├──► Kho file chứng từ (ngoài thư mục web)
+                                              ├──► Worker nền (email, nhắc việc, chuyển cấp, xuất SUN/PAS)
+                                              └──► API nội bộ (cho PAS: danh sách NCC, số dư ngân sách)
+
+                 VÙNG DMZ (đợt 2 trở đi, nếu IT đồng ý)
+NCC trên Internet ──HTTPS──► Cổng NCC (ứng dụng tách riêng, quyền hạn chế) ──► API giới hạn ──► hệ thống nội bộ
 ```
 
-- **Ngôn ngữ/khung:** Python 3.12, Django 5.2 LTS (hỗ trợ đến 2028).
-- **Giao diện:** Django template render phía máy chủ + HTMX cho thao tác nhanh. Không dùng SPA (React…) để ít thành phần, ít bề mặt tấn công, dễ bàn giao. Mọi thư viện CSS/JS đóng gói sẵn, **không gọi CDN ngoài** (máy chủ nội bộ có thể không ra Internet).
-- **Đóng gói:** Docker Compose (app, db, nginx, worker), để IT cài một lệnh.
-- **Không dùng Redis/Celery ở đợt 1:** việc nền dùng bảng outbox trong PostgreSQL + tiến trình worker, bớt một hệ thống IT phải vận hành.
-- **Tiền:** kiểu Decimal, không dùng số thực; đơn vị VND.
-- **Năm tài chính:** theo năm dương lịch. **[Đề xuất]**
-- **Giao diện tiếng Việt.**
+- Python 3.12, Django 5.2 LTS (hỗ trợ đến 2028).
+- Giao diện: Django template + HTMX, không SPA. Thư viện CSS/JS đóng gói sẵn, không gọi CDN ngoài.
+- Docker Compose (app, db, nginx, worker), để IT cài một lệnh.
+- Việc nền: bảng outbox trong PostgreSQL + worker; không Redis/Celery ở đợt 1.
+- API nội bộ: REST, xác thực bằng token cấp cho từng hệ thống, chỉ mở trong mạng nội bộ. Đáp ứng R13, R24, R48.
+- **Cổng NCC tách riêng:** NCC truy cập từ Internet, nên cổng này **không được** là cùng một ứng dụng với hệ thống nội bộ. Đặt ở DMZ, chỉ gọi vào hệ thống nội bộ qua API giới hạn. Đợt 2 làm trước phần nội bộ (người mua hàng nhập báo giá NCC gửi qua email); cổng NCC là quyết định riêng cùng IT. **[Đề xuất]**
+- **Tiền tệ:** số tiền lưu dạng Decimal kèm loại tiền (VND, USD, HKD…) và tỷ giá tại ngày lập; quy đổi VND để so ngưỡng duyệt và trừ ngân sách. **[RFP; thay quyết định "chỉ VND" ở bản trước]**
+- Năm tài chính = năm dương lịch. **[Đề xuất]**
+- Giao diện tiếng Việt.
 
 ## 7. Các thành phần của đợt 1 (nền tảng)
 
-| Thành phần | Nội dung |
-|---|---|
-| `accounts` | Người dùng, phòng ban, chức danh, vai trò. Bản mẫu: tài khoản nội bộ + mật khẩu mạnh + MFA (mã OTP). Có sẵn chỗ nối SSO (OIDC với Entra ID/ADFS hoặc LDAP với AD) để IT bật. |
-| `audit` | Nhật ký sự kiện chỉ-ghi-thêm (xem 8.3). Màn hình tra cứu, xuất cho kiểm toán. |
-| `documents` | Đính kèm chứng từ vào hồ sơ: giới hạn loại file (PDF, ảnh, Excel, Word), giới hạn dung lượng, lưu mã băm SHA-256, tải về qua kiểm tra quyền. |
-| `workflow` | Bộ máy luồng duyệt cấu hình được (xem 7.1). |
-| `budget` | Ngân sách năm theo phòng ban × khoản mục; số đã cam kết (tờ trình đã duyệt), đã chi (từ PAS). Nhập từ Excel. |
-| `vendors` | Danh mục NCC, trạng thái (đang hiệu lực / chờ đánh giá / bị khoá), lịch sử. Nhập từ Excel. |
-| `requisitions` | Tờ trình mua sắm: thông tin, dòng hàng, 03 báo giá đính kèm, liên kết ngân sách, chạy luồng duyệt end-to-end. |
-| `notifications` | Email khi có việc chờ, quá hạn; màn hình "Việc chờ tôi"; đo thời gian xử lý từng bước. |
-| `integrations` | Bộ chuyển đổi cho SSO, SUN, PAS, email. Đợt 1 dùng **bản giả lập**; IT thay bằng kết nối thật. |
+| Thành phần | Nội dung | Tiêu chí RFP |
+|---|---|---|
+| `accounts` | Người dùng, Khối/Phòng ban, chức danh, vai trò. Bản mẫu: tài khoản nội bộ + MFA; chỗ nối SSO và đồng bộ HRIS cho IT bật sau | R59 |
+| `audit` | Nhật ký chỉ-ghi-thêm (8.3); tra cứu; xuất cho kiểm toán | R59, R86 |
+| `documents` | Đính kèm nhiều file/hồ sơ, xem trước không cần tải, checklist loại chứng từ theo loại hồ sơ, mã băm SHA-256 | R87 |
+| `workflow` | Bộ máy luồng duyệt cấu hình được (7.1), uỷ quyền (7.2), nhắc việc và chuyển cấp khi quá hạn | R20–R23, R63 |
+| `budget` | Sổ ngân sách (7.3): lập, duyệt, điều chỉnh/điều chuyển có duyệt, giữ chỗ, giải phóng, hoàn trả; số dư thời gian thực; nhập Excel | R1, R18, R19 |
+| `vendors` | Danh mục NCC cơ bản: thông tin, mã số thuế, tài khoản ngân hàng, nhóm hàng hoá/dịch vụ, trạng thái (hiệu lực/chờ duyệt/tạm ngưng/danh sách đen); nhập Excel. Quy trình đánh giá, duyệt NCC để đợt 2 | (nền cho R2–R13) |
+| `requisitions` | Tờ trình: theo mẫu, dòng hàng, đa tiền tệ, **nhiều nguồn ngân sách**, 03 báo giá đính kèm (hoặc lý do ngoại lệ), tham vấn, FAD tiền kiểm (màn hình riêng), duyệt end-to-end; lưu nháp, sao chép | R14–R17, R78 |
+| `notifications` | Email 2 mẫu (chính thức, xin ý kiến), mẫu mail chỉnh được không cần sửa code; thông báo trong hệ thống; "Việc chờ tôi" | R62, R83 |
+| `integrations` | Bộ chuyển đổi SSO, SUN, PAS, IMS, HRIS, email. Đợt 1 dùng **bản giả lập** | (nền cho R60) |
+| `ui` (dùng chung) | Bảng dữ liệu chuẩn: lọc (lưu bộ lọc), sắp xếp nhiều cột, tìm nhanh, cố định tiêu đề, phân trang, tổng phụ, định dạng tiền + số tiền bằng chữ, gợi ý chọn, tự điền, kiểm tra khi nhập (MST, số tài khoản, trùng), chọn nhiều + duyệt hàng loạt, xuất Excel/PDF theo bộ lọc, liên kết chứng từ | R65–R81, R88 |
 
 ### 7.1 Bộ máy luồng duyệt
-- **Chính sách duyệt** có phiên bản, hiệu lực từ ngày. Mỗi chính sách gồm các **quy tắc**: điều kiện (trong/ngoài ngân sách, khoảng tiền, luỹ kế năm, loại chi phí, phòng ban) → chuỗi **bước** (đề nghị, tham vấn, tiền kiểm, duyệt lớp 1/2/3, HĐQT).
-- Mỗi bước gắn **vai trò + phạm vi** (ví dụ: "Trưởng phòng của phòng lập tờ trình", "FAD tiền kiểm", "đơn vị tham vấn theo nội dung").
-- Bước có thể là **bắt buộc chấp thuận** hoặc **chỉ cho ý kiến**: cấu hình được.
-- Khi tờ trình được nộp, hệ thống **chụp lại phiên bản chính sách** đang hiệu lực; sửa chính sách sau đó không ảnh hưởng tờ trình đang chạy.
-- **Luỹ kế ngoài ngân sách** tự tính, phạm vi (phòng ban hay toàn công ty) cấu hình được. Người lập không tự chọn cấp duyệt.
+- **Chính sách duyệt** có phiên bản, hiệu lực từ ngày. Gồm các **quy tắc**: điều kiện (trong/ngoài ngân sách, khoảng tiền quy đổi VND, luỹ kế năm, loại chi phí, phương án mua sắm (dự án/BAU/công tác…), phòng ban, mua ngoại lệ) → chuỗi **bước** (đề nghị, owner budget, tham vấn, FAD tiền kiểm, lớp 1/2/3, HĐQT).
+- Bước gắn **vai trò + phạm vi** (ví dụ "Trưởng phòng của phòng lập", "Owner của nguồn ngân sách", "đơn vị tham vấn theo nội dung"). Hồ sơ nhiều nguồn ngân sách có thể sinh **nhánh duyệt song song** cho từng owner.
+- Bước **bắt buộc chấp thuận** hoặc **chỉ cho ý kiến**: cấu hình được. Ý kiến tham vấn hiển thị cho người duyệt trước khi quyết định.
+- Khi nộp, hệ thống **chụp phiên bản chính sách**; sửa chính sách sau không ảnh hưởng hồ sơ đang chạy.
+- **Tự xác định luồng**, người lập không chọn tay. Luỹ kế ngoài ngân sách tự tính, phạm vi cấu hình được.
 - **Duyệt tại cuộc họp** (BMS, HĐQT): người được giao ghi nhận kết quả + đính kèm biên bản.
-- Thao tác: chấp thuận, từ chối, **trả lại bổ sung** (tạo phiên bản mới của tờ trình, giữ lịch sử).
-- **Cảnh báo chia nhỏ tờ trình:** cùng phòng ban + cùng NCC hoặc khoản mục trong N ngày, tổng vượt ngưỡng → cảnh báo cho FAD tiền kiểm. N cấu hình được.
-- **Uỷ quyền khi vắng mặt:** [Mở, mục 12].
+- Thao tác: chấp thuận, từ chối, **trả lại bổ sung** (tạo phiên bản mới, giữ lịch sử), duyệt hàng loạt.
+- **Thời hạn xử lý (SLA)** cho từng bước: nhắc trước hạn, nhắc quá hạn, chuyển cấp khi quá hạn.
+- **Cảnh báo chia nhỏ tờ trình:** cùng phòng + cùng NCC/khoản mục trong N ngày, tổng vượt ngưỡng → cảnh báo FAD tiền kiểm.
+
+### 7.2 Uỷ quyền duyệt thay **[RFP: R21 bắt buộc]**
+- Người duyệt (hoặc quản trị theo văn bản) tạo uỷ quyền: người nhận, từ ngày – đến ngày, phạm vi (loại hồ sơ, hạn mức tối đa, phòng ban), đính kèm văn bản uỷ quyền.
+- Hồ sơ đến hạn duyệt trong thời gian uỷ quyền được chuyển cho người nhận; hiển thị và ghi audit "X duyệt thay Y theo uỷ quyền số…".
+- Ràng buộc: không uỷ quyền vượt thẩm quyền của chính mình; người nhận không được duyệt hồ sơ do chính họ lập; không uỷ quyền lại (không uỷ quyền bắc cầu). **[Đề xuất]**
+- Chi tiết quy định uỷ quyền của HSC: **[Mở, mục 12]**.
+
+### 7.3 Sổ ngân sách **[RFP + Đề xuất cách làm]**
+- **Chiều ngân sách:** Năm × Khối × Phòng ban × Main Item × Loại chi phí × Mã chi phí × Mã project; mỗi dòng có **Owner budget**; **nguồn ngân sách** (Công ty, Công đoàn…). **[RFP]** Ngân sách có thể theo hạn mức năm hoặc phân bổ theo timeline (tháng/quý). **[RFP]**
+- **Cách ghi nhận:** giống sổ kế toán. Mọi biến động ngân sách là một **bút toán ngân sách** chỉ-ghi-thêm: Kế hoạch được duyệt, Bổ sung, Điều chỉnh, Điều chuyển (hai bút toán đối ứng), Giữ chỗ (khi tờ trình được duyệt), Giải phóng (khi huỷ), Thực chi (khi PAS báo đã thanh toán), Hoàn trả (phần nghiệm thu thấp hơn giữ chỗ). Số dư = tổng các bút toán. Không sửa số trực tiếp; muốn sửa thì ghi bút toán điều chỉnh có duyệt. **[Đề xuất]**
+- **Số dư khả dụng** = Ngân sách được duyệt − Giữ chỗ − Thực chi. Hiển thị ngay khi lập tờ trình; cảnh báo hoặc chặn khi vượt (4.1 câu 1).
+- **Lập ngân sách năm:** sao chép từ năm trước (giữ nguyên / chỉnh / thêm dự án), nhập Excel, trình duyệt. Dự báo theo thực chi: đợt 3.
 
 ## 8. Bảo mật thông tin
 
-Chuẩn tham chiếu: **OWASP ASVS mức 2** (bộ tiêu chí kiểm tra bảo mật ứng dụng web phổ biến). IT/ATTT HSC có thể bổ sung chuẩn nội bộ.
+Chuẩn tham chiếu: **OWASP ASVS mức 2**. IT/ATTT HSC bổ sung chuẩn nội bộ. RFP coi ATTT là điều kiện loại; bản tự xây áp dụng cùng tiêu chuẩn.
 
 ### 8.1 Truy cập
-- Chỉ truy cập trong mạng nội bộ/VPN; bắt buộc HTTPS.
-- Đăng nhập SSO công ty (khi chạy thật); bản mẫu có MFA. Khoá tạm sau nhiều lần sai; hết phiên sau 30 phút không thao tác. **[Đề xuất]**
-- **Phân quyền theo vai trò + theo dữ liệu:** người dùng chỉ thấy hồ sơ của phòng mình và hồ sơ được giao xử lý; FAD/BMS/Kiểm soát thấy theo phạm vi được cấp.
-- **Phân tách nhiệm vụ** (bắt buộc trong code, không cấu hình tắt được): người lập không tự duyệt hồ sơ của mình; người tạo NCC mới không tự duyệt NCC đó; quản trị viên kỹ thuật không duyệt nghiệp vụ.
+- Hệ thống nội bộ chỉ truy cập trong mạng nội bộ/VPN; bắt buộc HTTPS.
+- SSO công ty khi chạy thật; bản mẫu có MFA. Khoá tạm sau nhiều lần sai; hết phiên sau 30 phút không thao tác. **[Đề xuất]**
+- Phân quyền theo vai trò + theo dữ liệu: chỉ thấy hồ sơ của phòng mình, hồ sơ mình là owner budget, hoặc hồ sơ được giao xử lý.
+- **Phân tách nhiệm vụ** (cứng trong code): người tạo không tự duyệt (R16); người tạo NCC không tự duyệt NCC đó; người được uỷ quyền không duyệt hồ sơ mình lập; quản trị kỹ thuật không duyệt nghiệp vụ.
+- **Khai báo xung đột lợi ích** (R5, đợt 2): người đề xuất và hội đồng chọn NCC khai báo trước khi xem/chấm báo giá; lưu vào audit.
 
 ### 8.2 Ứng dụng
-- Chống các lỗi web phổ biến (SQL injection, XSS, CSRF, clickjacking) bằng cơ chế sẵn có của Django + header bảo mật (CSP, HSTS…).
-- Mọi dữ liệu nhập (form, Excel) đều kiểm tra hợp lệ; file Excel được đọc như dữ liệu, không chạy macro/công thức.
+- Chống SQL injection, XSS, CSRF, clickjacking bằng cơ chế sẵn có của Django + header bảo mật (CSP, HSTS…).
+- Kiểm tra mọi dữ liệu nhập (form, Excel, API); file Excel đọc như dữ liệu, không chạy macro/công thức.
 - File tải lên: danh sách loại cho phép, giới hạn dung lượng, lưu ngoài thư mục web, đổi tên ngẫu nhiên; IT có thể nối quét virus (ClamAV).
+- API: token riêng cho từng hệ thống, quyền tối thiểu, giới hạn tần suất, ghi log mọi lần gọi.
+- Cổng NCC (đợt 2+): ứng dụng tách riêng ở DMZ, tài khoản NCC chỉ thấy dữ liệu của chính NCC đó, chống dò mật khẩu, kiểm thử xâm nhập riêng trước khi mở ra Internet.
 
 ### 8.3 Audit trail
-- Mọi sự kiện (tạo, sửa (kèm giá trị cũ/mới), nộp, duyệt, từ chối, đăng nhập, đổi cấu hình, tải file) ghi vào bảng riêng: ai, lúc nào, từ đâu (IP), làm gì.
-- Bảng **chỉ ghi thêm**: tài khoản cơ sở dữ liệu của ứng dụng không có quyền sửa/xoá; thêm trigger chặn sửa/xoá.
-- **Chuỗi băm:** mỗi bản ghi chứa mã băm của bản ghi trước. Nếu ai sửa trực tiếp trong cơ sở dữ liệu, kiểm tra định kỳ sẽ phát hiện.
+- Ghi mọi sự kiện (tạo, sửa (kèm giá trị trước/sau), nộp, duyệt, duyệt thay, từ chối, đăng nhập, đổi cấu hình, tải file, gọi API) vào bảng riêng: ai, lúc nào, từ đâu, làm gì.
+- Bảng **chỉ ghi thêm**: tài khoản CSDL của ứng dụng không có quyền sửa/xoá; trigger chặn sửa/xoá.
+- **Chuỗi băm:** mỗi bản ghi chứa mã băm bản ghi trước; kiểm tra định kỳ phát hiện sửa trực tiếp trong CSDL.
+- Báo cáo **timeline từng bước duyệt** lấy từ audit trail. **[RFP]**
 
 ### 8.4 Dữ liệu
-- Mật khẩu, khoá bí mật nằm trong biến môi trường/file `.env` trên máy chủ, **không bao giờ đưa vào git**.
-- Sao lưu cơ sở dữ liệu và kho file hằng ngày (IT vận hành); có kiểm tra khôi phục.
-- Dữ liệu cá nhân (tên, email nhân viên; thông tin liên hệ NCC) ở mức tối thiểu cần thiết.
+- Mật khẩu, khoá bí mật nằm trong biến môi trường trên máy chủ, **không đưa vào git**.
+- Sao lưu CSDL và kho file hằng ngày; kiểm tra khôi phục định kỳ (RFP chấm "Backup plan").
+- Dữ liệu cá nhân và thông tin tài khoản ngân hàng NCC ở mức tối thiểu; che bớt khi hiển thị cho người không cần.
 
 ### 8.5 Quy trình phát triển
-- Kiểm thử tự động cho logic nghiệp vụ, đặc biệt luồng duyệt và phân quyền.
-- Mỗi lần đẩy code tự chạy: kiểm thử, quét lỗ hổng thư viện (`pip-audit`), quét lỗi bảo mật trong code (`bandit`), quét lộ mật khẩu (`gitleaks`).
-- Trước khi chạy thật: IT/ATTT rà soát code và kiểm thử xâm nhập (pentest).
+- Kiểm thử tự động cho logic nghiệp vụ, đặc biệt luồng duyệt, uỷ quyền, sổ ngân sách, phân quyền.
+- Mỗi lần đẩy code: kiểm thử, `pip-audit`, `bandit`, `gitleaks`.
+- Trước khi chạy thật: IT/ATTT rà soát code và pentest.
 
-### 8.6 Cảnh báo về nơi lưu code hiện tại
+### 8.6 Nơi lưu code và tài liệu
 Repo đang ở **GitHub cá nhân** (`hdbdien2511/procurement-fad`). Đề xuất:
-1. Đảm bảo repo ở chế độ **Private**.
-2. **Không** đưa vào repo: dữ liệu thật, file chính sách nội bộ gốc, tên/email nhân viên thật, số liệu ngân sách thật. Bảng thẩm quyền ở mục 4 chỉ là bản trích để thiết kế; nếu chính sách nội bộ không cho phép, sẽ thay bằng số giả.
-3. Khi IT tiếp nhận: chuyển repo sang hệ thống quản lý mã nguồn của HSC.
+1. Giữ repo ở chế độ **Private**.
+2. **Không** đưa vào repo: dữ liệu thật, file chính sách gốc, **file RFP gốc**, tên/email nhân viên thật, số liệu ngân sách thật. Bảng thẩm quyền ở mục 4 là bản trích để thiết kế; nếu chính sách nội bộ không cho phép, sẽ thay bằng số giả.
+3. Khi IT tiếp nhận: chuyển repo về hệ thống quản lý mã nguồn của HSC.
 
-Việc có được phép phát triển trên GitHub cá nhân và dùng công cụ AI với tài liệu nội bộ hay không cần **bạn xác nhận với IT/ATTT**.
+Việc phát triển trên GitHub cá nhân và dùng công cụ AI với tài liệu nội bộ cần **người dùng xác nhận với IT/ATTT**.
 
 ## 9. Cấu trúc thư mục dự án **[Đề xuất]**
 
@@ -175,8 +209,8 @@ Việc có được phép phát triển trên GitHub cá nhân và dùng công c
 procurement-fad/
 ├── README.md                  Giới thiệu, cách chạy thử
 ├── CLAUDE.md                  Hướng dẫn cho Claude khi làm việc trên repo
-├── docs/                      TÀI LIỆU (phần bạn làm chủ)
-│   ├── 01-nghiep-vu/          Quy trình, bảng thuật ngữ, yêu cầu nghiệp vụ
+├── docs/                      TÀI LIỆU (phần người dùng làm chủ)
+│   ├── 01-nghiep-vu/          Quy trình, thuật ngữ, yêu cầu nghiệp vụ, ma trận truy vết RFP
 │   ├── 02-thiet-ke/           Kiến trúc, mô hình dữ liệu, các quyết định (ADR)
 │   ├── 03-bao-mat/            Phân loại dữ liệu, mô hình rủi ro, checklist ATTT
 │   ├── 04-kiem-thu/           Kịch bản kiểm thử nghiệp vụ (UAT)
@@ -189,62 +223,73 @@ procurement-fad/
 │   │   ├── accounts/          Người dùng, phòng ban, vai trò
 │   │   ├── audit/             Audit trail
 │   │   ├── documents/         Chứng từ đính kèm
-│   │   ├── workflow/          Bộ máy luồng duyệt
-│   │   ├── budget/            Ngân sách
+│   │   ├── workflow/          Luồng duyệt, uỷ quyền, SLA
+│   │   ├── budget/            Sổ ngân sách
 │   │   ├── vendors/           Nhà cung cấp
 │   │   ├── requisitions/      Tờ trình mua sắm
 │   │   ├── notifications/     Email, việc chờ xử lý
-│   │   └── integrations/      SSO, SUN, PAS, email (giả lập → thật)
+│   │   ├── integrations/      SSO, SUN, PAS, IMS, HRIS (giả lập → thật)
+│   │   ├── api/               API nội bộ cho PAS và báo cáo
+│   │   └── ui/                Bảng dữ liệu, bộ lọc, xuất file dùng chung
 │   ├── templates/             Giao diện (HTML)
-│   └── static/                CSS, JS, icon (đóng gói sẵn, không CDN)
+│   └── static/                CSS, JS, icon (đóng gói sẵn)
 ├── tests/                     Kiểm thử tự động
-├── sample-data/               Dữ liệu GIẢ để chạy thử (Excel mẫu)
+├── sample-data/               Dữ liệu GIẢ (Excel mẫu ngân sách, NCC)
 ├── deploy/                    Docker Compose, Nginx, .env.example
-├── scripts/                   Lệnh tiện ích (tạo dữ liệu mẫu, sao lưu…)
+├── scripts/                   Tiện ích (tạo dữ liệu mẫu, sao lưu…)
 ├── .github/workflows/         Kiểm tra tự động mỗi lần đẩy code
 ├── pyproject.toml             Danh sách thư viện
-├── .gitignore                 Chặn file nhạy cảm (.env, dữ liệu, file tải lên)
+├── .gitignore                 Chặn file nhạy cảm (.env, dữ liệu, file tải lên, tài liệu gốc)
 └── .claude/                   Skills cho Claude (đã có)
 ```
 
-Đợt 2–3 thêm các app: `quotations` (báo giá, chọn NCC), `contracts` (PO/hợp đồng), `receiving` (nghiệm thu, đánh giá sau mua), `payments_handoff` (hồ sơ sang PAS), `reporting`.
+Đợt 2–3 thêm: `sourcing` (yêu cầu báo giá, đấu thầu, so sánh, ngoại lệ), `contracts`, `purchasing` (PO, nhận hàng, nghiệm thu), `evaluation` (đánh giá NCC), `payments_handoff` (đối chiếu, hồ sơ sang PAS), `reporting`, `post_audit`; dự án riêng `vendor-portal/` cho cổng NCC (nếu làm).
 
-**Cách bạn làm việc với cấu trúc này:** bạn chủ yếu làm trong `docs/01-nghiep-vu/` (quy trình, quy định, thuật ngữ) và `docs/04-kiem-thu/` (kịch bản kiểm thử theo nghiệp vụ). Claude viết `src/`, `tests/`, `deploy/` theo tài liệu đó. Mỗi thay đổi đều có kiểm thử chạy được để bạn và IT kiểm chứng.
+**Cách người dùng làm việc với cấu trúc này:** người dùng làm chủ `docs/01-nghiep-vu/` (quy trình, quy định, ma trận truy vết) và `docs/04-kiem-thu/` (kịch bản kiểm thử). Claude viết `src/`, `tests/`, `deploy/` theo tài liệu đó; mỗi thay đổi có kiểm thử chạy được.
 
-## 10. Lộ trình
+## 10. Lộ trình và truy vết RFP
 
-| Đợt | Nội dung | Kết quả kiểm chứng được |
-|---|---|---|
-| 0. Chuẩn bị | Repo, tài liệu nghiệp vụ, câu hỏi gửi IT, dữ liệu giả | IT trả lời câu hỏi mục 11 |
-| **1. Nền tảng** (bản thiết kế này) | Mục 7 | Một tờ trình chạy từ lập → tham vấn → FAD tiền kiểm → duyệt đủ lớp theo bảng thẩm quyền mẫu, có email, audit trail, chứng từ, trừ ngân sách cam kết |
-| 2. Chọn NCC & Hợp đồng | Báo giá, đánh giá NCC mới (FAD tiền kiểm, BMS duyệt), PO/hợp đồng, Pháp chế + FAD rà soát | Hồ sơ đi tiếp từ tờ trình đã duyệt đến hợp đồng đã ký |
-| 3. Thực hiện & Chi tiền | Nghiệm thu, đánh giá sau mua, đối chiếu PO–nghiệm thu–hoá đơn, xuất sang PAS/SUN, báo cáo, hậu kiểm | Hồ sơ thanh toán xuất được đúng mẫu PAS; báo cáo ngân sách thực chi |
-| 4. Bàn giao IT | SSO thật, kết nối SUN/PAS thật, rà soát bảo mật, pentest, cài trên máy chủ HSC, UAT, go-live | IT ký nhận vận hành |
+| Đợt | Nội dung | Tiêu chí RFP | Kết quả kiểm chứng được |
+|---|---|---|---|
+| 0. Chuẩn bị | Repo, tài liệu nghiệp vụ, câu hỏi gửi IT, dữ liệu giả; chốt mục 0 và 4.1 | – | IT trả lời mục 11 |
+| **1. Nền tảng** | Mục 7 | R1 (phần lập/điều chỉnh), R14–R23, R59, R62–R63, R65–R81, R83, R86–R88 | Một tờ trình (2 nguồn ngân sách, USD) chạy từ lập → tham vấn → FAD tiền kiểm → duyệt đủ lớp theo bảng mẫu, có duyệt thay, email, audit, chứng từ; giữ chỗ ngân sách đúng; người lập không tự duyệt được |
+| 2. NCC, tìm nguồn, hợp đồng | Đăng ký/đánh giá/duyệt NCC đầu năm, rủi ro, danh sách đen, xung đột lợi ích; yêu cầu báo giá, so sánh, đấu thầu, mua ngoại lệ; hợp đồng, review, phụ lục, nhắc gia hạn; API NCC cho PAS | R2–R13, R25–R28 | Từ nhu cầu → 03 báo giá → chọn NCC → hợp đồng đã duyệt |
+| 3. Thực hiện, thanh toán, báo cáo | PO, nhận hàng/nghiệm thu từng phần, hoàn trả ngân sách; đánh giá sau mua; đối chiếu 3 chiều, IMS, chênh lệch hoá đơn; hồ sơ sang PAS + nhận trạng thái; dữ liệu cho SUN; API số dư cho PAS; báo cáo, dashboard, hậu kiểm; in mẫu | R24, R29–R37, R41–R42, R44–R53, R82, R84–R85, R89 | Hồ sơ đi hết vòng đời; báo cáo Budget Control tái tạo được trong hệ thống |
+| 4. Bàn giao IT | SSO, kết nối thật SUN/PAS/IMS/HRIS, rà soát bảo mật, pentest, cài máy chủ HSC, UAT, đào tạo, go-live | R60, R61, R64 | IT ký nhận vận hành |
+| Sau | Cổng NCC ra Internet; mở rộng Công tác | R54–R58 (+ phần portal của R2, R8) | Quyết định riêng |
 
-## 11. Câu hỏi gửi IT (soạn sẵn để bạn chuyển)
+Không làm: R38, R39, R40, R43 (chỉ Option 1).
+
+## 11. Câu hỏi gửi IT (soạn sẵn)
 1. Máy chủ nội bộ chạy Linux hay Windows? Có cài được Docker không?
-2. Cơ sở dữ liệu chuẩn: PostgreSQL có được chấp nhận hay bắt buộc SQL Server?
-3. Đăng nhập công ty dùng gì: Microsoft Entra ID (Azure AD), ADFS hay Active Directory nội bộ (LDAP)?
-4. Gửi email từ ứng dụng nội bộ qua máy chủ mail nào (SMTP relay / Microsoft 365)?
-5. SUN và PAS nhận/xuất dữ liệu theo cách nào: file Excel/CSV theo mẫu, thư mục chung, hay API?
-6. Có chuẩn bảo mật/checklist nội bộ nào ứng dụng mới phải đạt? Có yêu cầu pentest trước go-live?
-7. Có được phát triển trên GitHub (repo private) và dùng công cụ AI hỗ trợ lập trình không? Khi bàn giao, chuyển mã nguồn về đâu?
-8. Chính sách lưu trữ chứng từ điện tử bao lâu? Sao lưu do ai phụ trách?
+2. CSDL chuẩn: PostgreSQL có được chấp nhận hay bắt buộc SQL Server?
+3. Đăng nhập công ty: Microsoft Entra ID, ADFS hay Active Directory (LDAP)? HRIS có API lấy cơ cấu tổ chức, chức danh không?
+4. Gửi email từ ứng dụng nội bộ qua máy chủ mail nào?
+5. PAS: có API hoặc cách nào để tạo hồ sơ thanh toán và lấy trạng thái thanh toán (file, thư mục chung, đọc CSDL)? Ai là đầu mối phía vendor PAS?
+6. SUN, IMS nhận/xuất dữ liệu theo cách nào? Đầu mối FPT cho IMS/HRIS?
+7. Có chuẩn bảo mật/checklist nội bộ nào ứng dụng mới phải đạt (tiêu chí "ATTT cho công ty chứng khoán" trong RFP cụ thể là gì)? Có yêu cầu pentest trước go-live?
+8. Có DMZ để đặt cổng NCC ra Internet không, hay cổng NCC phải do vendor/cloud đảm nhận?
+9. Có được phát triển trên GitHub (repo private) và dùng công cụ AI hỗ trợ lập trình không? Khi bàn giao chuyển mã nguồn về đâu?
+10. Chính sách lưu trữ chứng từ điện tử bao lâu? Sao lưu do ai phụ trách? Có hệ thống ký số đang dùng không?
 
 ## 12. Câu hỏi mở cho người dùng
-1. **Uỷ quyền khi vắng mặt** [Mở]: khi người duyệt nghỉ phép/công tác, hiện HSC xử lý thế nào?
-2. **Cấu trúc ngân sách** [Mở]: ngân sách năm được chia theo những chiều nào (phòng ban × khoản mục chi phí? theo mã tài khoản trên SUN?), và có điều chuyển giữa các khoản mục không?
+1. **Quan hệ với RFP** [Mở]: bản tự xây là (a) bản mẫu để làm rõ yêu cầu và kiểm chứng RFP trước khi chọn vendor, (b) phương án thay thế việc mua vendor (tự xây thành hệ thống chính thức), hay (c) phần bổ trợ chạy song song với hệ thống vendor? IT đã biết về việc tự xây chưa?
+2. **Quy định uỷ quyền của HSC** [Mở]: ai được uỷ quyền cho ai, có cần văn bản không, có giới hạn thời gian/hạn mức không? (Thiết kế 7.2 đã có cơ chế chung, chờ quy định để cấu hình.)
+3. **Hai điểm chưa nhất quán ở 4.1** [Mở]: chặn hay cho đi luồng ngoài ngân sách; NCC ngoài danh sách có phải duyệt không.
 
-## 13. Các quyết định Claude tự đưa ra (để bạn rà)
+## 13. Các quyết định Claude tự đưa ra (để người dùng rà)
 - Giao diện render phía máy chủ + HTMX, không SPA.
 - Không Redis/Celery ở đợt 1; dùng outbox trong PostgreSQL.
-- Chỉ VND; năm tài chính = năm dương lịch.
+- Đa tiền tệ, quy đổi VND theo tỷ giá ngày lập để so ngưỡng và trừ ngân sách.
+- Năm tài chính = năm dương lịch.
+- Sổ ngân sách theo kiểu bút toán chỉ-ghi-thêm.
 - Hết phiên sau 30 phút; MFA cho tài khoản nội bộ ở bản mẫu.
 - Audit trail chỉ-ghi-thêm + chuỗi băm.
 - Phân tách nhiệm vụ cứng trong code.
+- Uỷ quyền: không vượt thẩm quyền người uỷ quyền, không uỷ quyền bắc cầu.
+- Cổng NCC là ứng dụng tách riêng ở DMZ; đợt 2 làm phần nội bộ trước.
+- Mặc định chặt hơn ở hai điểm chưa nhất quán (4.1) cho đến khi FAD chốt.
 - Mã tờ trình dạng `TT-2026-00001`.
-- Bước tham vấn có thể đặt "bắt buộc chấp thuận" hoặc "chỉ cho ý kiến" theo cấu hình.
-- Phạm vi luỹ kế ngoài ngân sách cấu hình được (phòng ban/toàn công ty).
 
 ## 14. Phần để người lập trình quyết định
-Chi tiết mô hình dữ liệu, tên bảng, bố cục màn hình cụ thể, thư viện phụ trợ (miễn không thêm hạ tầng mới và phải qua quét bảo mật).
+Chi tiết mô hình dữ liệu, tên bảng, bố cục màn hình, thư viện phụ trợ (không thêm hạ tầng mới, phải qua quét bảo mật).
