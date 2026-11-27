@@ -32,6 +32,8 @@ STATUSES = [
     (CANCELLED, "Đã huỷ"),
 ]
 SUPPLEMENT, TRANSFER = "SUPPLEMENT", "TRANSFER"
+# Trạng thái làm tăng ngân sách (đã tăng, hoặc sẽ tăng nếu được duyệt) → tính vào luỹ kế ngoài ngân sách.
+CUMULATIVE_STATUSES = (APPROVED, IN_APPROVAL, BLOCKED)
 KINDS = [(SUPPLEMENT, "Bổ sung ngân sách"), (TRANSFER, "Điều chuyển ngân sách")]
 COMPANY_SCOPE, UNIT_SCOPE = "COMPANY", "UNIT"
 
@@ -151,19 +153,23 @@ class BudgetChangeRequest(models.Model):
         }
 
     def cumulative_amount_vnd(self, scope: str) -> Decimal:
-        """Luỹ kế ngoài ngân sách sau đề nghị này: tổng đề nghị bổ sung đã duyệt trong năm của dòng nhận
-        (toàn công ty, hoặc cùng đơn vị ngân sách khi `scope == "UNIT"`) cộng chính đề nghị này.
-        Điều chuyển không làm tăng tổng ngân sách nên không tính luỹ kế (chỉ trả số của chính nó)."""
+        """Luỹ kế ngoài ngân sách sau đề nghị này.
+
+        Tổng các đề nghị bổ sung **đã duyệt hoặc đang chạy** (đang duyệt, chờ ghi ngân sách) trong năm của
+        dòng nhận — toàn công ty, hoặc cùng đơn vị ngân sách khi `scope == "UNIT"` — cộng chính đề nghị này.
+        Tính cả đề nghị đang duyệt để không lách được hạn mức bằng cách chia nhỏ rồi nộp song song.
+        Điều chuyển không làm tăng tổng ngân sách nên không tính luỹ kế (chỉ trả số của chính nó).
+        """
         if self.kind == TRANSFER:
             return self.amount_vnd
         if scope not in (COMPANY_SCOPE, UNIT_SCOPE):
             raise ValueError(f"Phạm vi luỹ kế không hợp lệ: {scope}")
-        approved = BudgetChangeRequest.objects.filter(
-            kind=SUPPLEMENT, status=APPROVED, to_line__year=self.to_line.year
+        others = BudgetChangeRequest.objects.filter(
+            kind=SUPPLEMENT, status__in=CUMULATIVE_STATUSES, to_line__year=self.to_line.year
         ).exclude(pk=self.pk)
         if scope == UNIT_SCOPE:
-            approved = approved.filter(to_line__budget_unit_id=self.to_line.budget_unit_id)
-        total = approved.aggregate(total=Sum("amount_vnd"))["total"] or Decimal(0)
+            others = others.filter(to_line__budget_unit_id=self.to_line.budget_unit_id)
+        total = others.aggregate(total=Sum("amount_vnd"))["total"] or Decimal(0)
         return total + self.amount_vnd
 
     def on_workflow_finished(self, status: str) -> None:

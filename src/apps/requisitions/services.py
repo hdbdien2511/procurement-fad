@@ -25,11 +25,11 @@ from apps.core.numbering import next_number
 from apps.documents import search
 from apps.documents.models import QUOTE, Document
 from apps.notifications.outbox import notify
-from apps.workflow import engine
+from apps.workflow import engine, subject
 from apps.workflow.models import APPROVED as WF_APPROVED
 from apps.workflow.models import REJECTED as WF_REJECTED
 from apps.workflow.models import RETURNED as WF_RETURNED
-from apps.workflow.models import RUNNING, WorkflowInstance
+from apps.workflow.models import WorkflowInstance
 
 from .models import (
     APPROVED,
@@ -71,22 +71,23 @@ class BudgetCheck:
 
 # --- tiện ích ---------------------------------------------------------------------------------------
 
+_SYNC_FIELDS = ("number", "status", "total_original", "total_vnd", "fx_rate")
+
+
 def _lock(req) -> Requisition:
-    return Requisition.objects.select_for_update().get(pk=req.pk)
+    return subject.lock(req)
 
 
 def _sync(target, source) -> None:
-    """Cập nhật đối tượng người gọi đang giữ theo bản đã ghi."""
-    for name in ("number", "status", "total_original", "total_vnd", "fx_rate"):
-        setattr(target, name, getattr(source, name))
+    subject.sync(target, source, _SYNC_FIELDS)
 
 
 def _is_owner(req, user) -> bool:
-    return user.pk in (req.requester_id, req.created_by_id)
+    return subject.is_owner(req, user)
 
 
 def _running_instances(req):
-    return req.workflow_instances().filter(status=RUNNING)
+    return subject.running_instances(req)
 
 
 def _quote_count(req) -> int:

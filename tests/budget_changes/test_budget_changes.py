@@ -196,23 +196,77 @@ def test_cumulative_below_cap_routes_rule_a(db, org, budget, out_budget_policy, 
     assert submit(bcr, org.requester).rule.label == "A"
 
 
-def test_cumulative_counts_only_approved_supplements_of_the_year(db, org, budget, adm_line):
+def test_cumulative_counts_approved_and_in_flight_supplements_of_the_year(db, org, budget, adm_line):
     line_2025 = BudgetLine.objects.create(
         year=2025, budget_unit=budget.line.budget_unit, cost_code=budget.line.cost_code,
         project=budget.line.project, location=budget.line.location,
     )
     make_change(org, budget.line, 100_000_000, status="APPROVED", number="NS-2026-09001")
     make_change(org, budget.line, 1_000_000, status="REJECTED", number="NS-2026-09002")
+    make_change(org, budget.line, 5_000_000, status="IN_APPROVAL", number="NS-2026-09005")
+    make_change(org, budget.line, 3_000_000, status="BLOCKED", number="NS-2026-09006")
     make_change(org, budget.line, 2_000_000)  # nháp
     make_change(org, line_2025, 4_000_000, start=date(2025, 1, 1), status="APPROVED", number="NS-2025-09001")
     make_change(org, adm_line, 8_000_000, kind="TRANSFER", from_line=budget.line, status="APPROVED",
                 number="NS-2026-09003")
     make_change(org, adm_line, 16_000_000, status="APPROVED", number="NS-2026-09004")
     bcr = make_change(org, budget.line, 10_000_000)
-    assert bcr.cumulative_amount_vnd("COMPANY") == Decimal("126000000")
-    assert bcr.cumulative_amount_vnd("UNIT") == Decimal("110000000")  # chỉ cùng đơn vị ngân sách ITD
+    assert bcr.cumulative_amount_vnd("COMPANY") == Decimal("134000000")
+    assert bcr.cumulative_amount_vnd("UNIT") == Decimal("118000000")  # chỉ cùng đơn vị ngân sách ITD
     transfer = make_change(org, adm_line, 5_000_000, kind="TRANSFER", from_line=budget.line)
     assert transfer.cumulative_amount_vnd("COMPANY") == Decimal("5000000")  # điều chuyển không tính luỹ kế
+
+
+def test_split_supplements_count_in_flight_cumulative(db, org, budget, out_budget_policy, submit):
+    """Chia nhỏ đề nghị không lách được hạn mức luỹ kế: đề nghị đang duyệt cũng được tính."""
+    make_change(org, budget.line, 150_000_000, status="APPROVED", number="NS-2026-09001")
+    first = make_change(org, budget.line, 30_000_000)
+    assert submit(first, org.requester).rule.label == "A"  # luỹ kế 180tr < 200tr
+    second = make_change(org, budget.line, 30_000_000)
+    assert second.cumulative_amount_vnd("COMPANY") == Decimal("210000000")
+    assert submit(second, org.requester).rule.label == "B"  # luỹ kế 210tr gồm cả đề nghị đang duyệt
+
+
+def test_cumulative_grown_during_approval_blocks_without_posting(db, org, budget, adm_line, out_budget_policy,
+                                                                   submit):
+    """Luỹ kế vượt mức của cấp đã duyệt tại thời điểm duyệt xong → không ghi ngân sách, chờ trình lại."""
+    from apps.budget_changes.services import BudgetChangeError, retry_apply
+
+    make_change(org, budget.line, 150_000_000, status="APPROVED", number="NS-2026-09001")
+    bcr = make_change(org, budget.line, 30_000_000)
+    assert submit(bcr, org.requester).rule.label == "A"
+    make_change(org, adm_line, 40_000_000, status="APPROVED", number="NS-2026-09002")  # duyệt ở hồ sơ khác
+
+    approve_all(bcr)
+    assert bcr.status == "BLOCKED"
+    assert entries_of(bcr) == []
+    assert ledger.balance(budget.line).budget == Decimal("200000000")
+    note = AuditEvent.objects.filter(action="budget_change.status_changed").order_by("-id").first().changes["note"]
+    assert note == "Luỹ kế ngoài ngân sách đã vượt mức của cấp đã duyệt; cần trình lại cấp cao hơn"
+    assert Notification.objects.filter(title__contains="chưa ghi được",
+                                        user=org.requester).exists()
+    with pytest.raises(BudgetChangeError, match="trình lại cấp cao hơn"):
+        retry_apply(bcr, budget.admin)
+    assert entries_of(bcr) == []
+
+
+def test_callback_posts_once_and_only_from_in_approval(db, org, budget, out_budget_policy, submit):
+    from apps.budget_changes.services import BudgetChangeError
+
+    bcr = make_change(org, budget.line, 10_000_000)
+    submit(bcr, org.requester)
+    approve_all(bcr)
+    posted = entries_of(bcr)
+    assert len(posted) == 1
+
+    with pytest.raises(BudgetChangeError, match="không ở trạng thái đang duyệt"):
+        bcr.on_workflow_finished("APPROVED")  # gọi lại callback: không ghi thêm bút toán
+    assert entries_of(bcr) == posted
+
+    draft = make_change(org, budget.line, 10_000_000)
+    with pytest.raises(BudgetChangeError, match="không ở trạng thái đang duyệt"):
+        draft.on_workflow_finished("APPROVED")
+    assert entries_of(draft) == []
 
 
 def test_cumulative_scope_setting_unit(db, org, budget, adm_line, out_budget_policy, submit):
@@ -240,10 +294,10 @@ def test_prefill_from_blocked_requisition(db, org, budget, in_budget_policy, out
     assert bcr.requester == org.requester
     assert bcr.reason == f"Bổ sung ngân sách cho tờ trình nháp #{req.pk}"
 
-    # gọi lại: cập nhật số tiền, không tạo bản trùng; làm tròn lên đồng
-    [again] = prefill_from_shortfall(req, [(budget.line, Decimal("60000000.2"))], org.requester)
+    # gọi lại: dùng bản nháp sẵn có, số tiền tính lại từ ngân sách (không tin số của người gọi)
+    [again] = prefill_from_shortfall(req, [(budget.line, Decimal("999000000"))], org.requester)
     assert again.pk == bcr.pk
-    assert again.amount_vnd == Decimal("60000001")
+    assert again.amount_vnd == Decimal("50000000")
     assert req.budget_change_requests.count() == 1
 
     # đề nghị bổ sung được duyệt → tờ trình nộp được
@@ -266,12 +320,36 @@ def test_prefill_keeps_supplement_inside_the_year(db, org, budget, in_budget_pol
     assert (bcr.start, bcr.months) == (date(2026, 7, 1), 6)
 
 
-def test_prefill_requires_visibility(db, org, budget, in_budget_policy):
+def test_prefill_checks_owner_lines_and_shortfall(db, org, budget, adm_line, in_budget_policy):
     from apps.budget_changes.services import BudgetChangeError, prefill_from_shortfall
 
     req = make_requisition(org, budget.line, 250_000_000)
-    with pytest.raises(BudgetChangeError):
-        prefill_from_shortfall(req, [(budget.line, Decimal("50000000"))], UserFactory())
+    short = [(budget.line, Decimal("50000000"))]
+    with pytest.raises(BudgetChangeError, match="người lập hoặc người đề nghị"):
+        prefill_from_shortfall(req, short, UserFactory())
+    with pytest.raises(BudgetChangeError, match="người lập hoặc người đề nghị"):
+        prefill_from_shortfall(req, short, org.dept_head)  # xem được nhưng không phải người lập
+    with pytest.raises(BudgetChangeError, match="không thuộc phân bổ"):
+        prefill_from_shortfall(req, [(adm_line, Decimal("1000000"))], org.requester)
+
+    enough = make_requisition(org, budget.line, 10_000_000)
+    with pytest.raises(BudgetChangeError, match="không thiếu ngân sách"):
+        prefill_from_shortfall(enough, [(budget.line, Decimal("50000000"))], org.requester)
+
+
+def test_prefill_after_submit_reuses_the_pending_request(db, org, budget, in_budget_policy, out_budget_policy,
+                                                          submit):
+    from apps.budget_changes.services import prefill_from_shortfall
+
+    req = make_requisition(org, budget.line, 250_000_000)
+    short = [(budget.line, Decimal("50000000"))]
+    [bcr] = prefill_from_shortfall(req, short, org.requester)
+    submit(bcr, org.requester)
+
+    [again] = prefill_from_shortfall(req, short, org.requester)
+    assert again.pk == bcr.pk
+    assert again.status == "IN_APPROVAL"
+    assert req.budget_change_requests.count() == 1
 
 
 # --- kiểm tra hợp lệ, khoá nội dung, vòng đời -------------------------------------------------------

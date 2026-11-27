@@ -19,19 +19,21 @@ from apps.budget.ledger import InsufficientBudget
 from apps.budget.models import ADJUST
 from apps.budget.models import TRANSFER as TRANSFER_ENTRY
 from apps.core.numbering import next_number
+from apps.core.services import get_setting
 from apps.notifications.outbox import notify
-from apps.requisitions.models import Requisition
-from apps.workflow import engine
+from apps.requisitions import models as requisitions
+from apps.workflow import engine, subject
+from apps.workflow.exceptions import NoMatchingRule
 from apps.workflow.models import APPROVED as WF_APPROVED
-from apps.workflow.models import BUDGET_CHANGE
+from apps.workflow.models import BUDGET_CHANGE, PolicyRule, WorkflowInstance
 from apps.workflow.models import REJECTED as WF_REJECTED
 from apps.workflow.models import RETURNED as WF_RETURNED
-from apps.workflow.models import RUNNING, WorkflowInstance
 
 from .models import (
     APPROVED,
     BLOCKED,
     CANCELLED,
+    CUMULATIVE_STATUSES,
     DRAFT,
     IN_APPROVAL,
     REJECTED,
@@ -44,10 +46,20 @@ from .models import (
 
 NUMBER_PREFIX = "NS"
 BLOCKED_NOTE = "Dòng ngân sách nguồn không đủ số khả dụng — chưa ghi điều chuyển"
+REROUTE_NOTE = "Luỹ kế ngoài ngân sách đã vượt mức của cấp đã duyệt; cần trình lại cấp cao hơn"
+NOT_IN_APPROVAL = "Đề nghị không ở trạng thái đang duyệt"
+# Trạng thái của đề nghị đã tồn tại cho cùng (tờ trình, dòng ngân sách): dùng lại, không tạo bản trùng.
+LIVE_STATUSES = (DRAFT, RETURNED, *CUMULATIVE_STATUSES)
+# Tờ trình đang bị chặn vì thiếu ngân sách (chưa nộp được, hoặc đã duyệt mà chưa giữ chỗ được).
+PREFILL_REQ_STATUSES = (requisitions.DRAFT, requisitions.RETURNED, requisitions.BUDGET_BLOCKED)
 
 
 class BudgetChangeError(Exception):
     """Thao tác không hợp lệ trên đề nghị ngân sách; `str(e)` là thông báo tiếng Việt."""
+
+
+class _Rerouted(BudgetChangeError):
+    """Luỹ kế đã vượt mức của cấp đã duyệt — chỉ dùng nội bộ giữa `_apply` và người gọi."""
 
 
 class SubmitBlocked(BudgetChangeError):
@@ -58,22 +70,23 @@ class SubmitBlocked(BudgetChangeError):
 
 # --- tiện ích ---------------------------------------------------------------------------------------
 
+_SYNC_FIELDS = ("number", "status", "start", "requester_unit_id")
+
+
 def _lock(bcr) -> BudgetChangeRequest:
-    return BudgetChangeRequest.objects.select_for_update().get(pk=bcr.pk)
+    return subject.lock(bcr)
 
 
 def _sync(target, source) -> None:
-    """Cập nhật đối tượng người gọi đang giữ theo bản đã ghi."""
-    for name in ("number", "status", "start", "requester_unit_id"):
-        setattr(target, name, getattr(source, name))
+    subject.sync(target, source, _SYNC_FIELDS)
 
 
 def _is_owner(bcr, user) -> bool:
-    return user.pk in (bcr.requester_id, bcr.created_by_id)
+    return subject.is_owner(bcr, user)
 
 
 def _running_instances(bcr):
-    return bcr.workflow_instances().filter(status=RUNNING)
+    return subject.running_instances(bcr)
 
 
 def _status_changed(locked, old, actor, **changes) -> None:
@@ -153,34 +166,67 @@ def submit(bcr, user) -> WorkflowInstance:
 
 # --- kết thúc luồng duyệt / ghi ngân sách -------------------------------------------------------------
 
+def _rerouted(locked) -> bool:
+    """Luỹ kế tại thời điểm ghi có vượt mức của cấp đã duyệt hay không.
+
+    Tính lại luỹ kế và chọn lại quy tắc trên ĐÚNG phiên bản chính sách đã dùng khi nộp (lấy từ snapshot
+    của hồ sơ duyệt). Quy tắc mới có `priority` lớn hơn (cấp cao hơn) nghĩa là hồ sơ đã được duyệt ở cấp
+    thấp hơn mức cần thiết → không ghi ngân sách, phải trình lại. Gọi SAU khi đã khoá các dòng ngân sách
+    liên quan để hai hồ sơ cùng dòng không cùng lúc vượt mức.
+    """
+    instance = locked.workflow_instances().order_by("-pk").first()
+    if instance is None:
+        raise BudgetChangeError("Đề nghị chưa có hồ sơ duyệt")
+    approved_rule = PolicyRule.objects.filter(pk=instance.snapshot["rule"]["id"]).first()
+    cumulative = Decimal(locked.cumulative_amount_vnd(get_setting("cumulative_scope")))
+    try:
+        rule = engine.select_rule(instance.policy, {"amount_vnd": locked.amount_vnd}, cumulative)
+    except NoMatchingRule:
+        return True
+    return approved_rule is None or rule.priority > approved_rule.priority
+
+
 def _apply(locked, user) -> list:
-    """Ghi bút toán của đề nghị đã duyệt; dòng nguồn thiếu thì raise `InsufficientBudget` (không ghi gì)."""
+    """Ghi bút toán của đề nghị đã duyệt.
+
+    Dòng nguồn thiếu → `InsufficientBudget`; luỹ kế vượt cấp đã duyệt → `_Rerouted`; đã có bút toán của
+    hồ sơ này → `ValueError` (chống ghi trùng). Mọi trường hợp đều không ghi gì.
+    """
     kind = TRANSFER_ENTRY if locked.kind == TRANSFER else ADJUST
+    ledger.lock_lines([line.pk for line, _ in locked.legs()])  # tuần tự hoá việc kiểm tra luỹ kế
+    if _rerouted(locked):
+        raise _Rerouted(REROUTE_NOTE)
     return ledger.post_allocated(locked.legs(), kind, start=locked.start, months=locked.months,
                                  source=locked, user=user)
 
 
-def _notify_blocked(bcr) -> None:
+def _notify_blocked(bcr, reason: str) -> None:
     title = f"Đề nghị {bcr} đã được duyệt nhưng chưa ghi được ngân sách"
     recipients = {bcr.requester_id: bcr.requester}
     for u in users_with_role(FAD_BUDGET_ADMIN).order_by("pk"):
         recipients.setdefault(u.pk, u)
     for user in recipients.values():
         notify(user, title, "/", email_template="RESULT",
-               context={"ho_so": str(bcr), "ket_qua": "Chưa ghi được ngân sách — dòng nguồn không đủ số khả dụng"})
+               context={"ho_so": str(bcr), "ket_qua": f"Chưa ghi được ngân sách — {reason}"})
 
 
 def on_workflow_finished(bcr, status: str) -> None:
-    """Callback của engine (trong transaction của `engine.act`, instance đã được khoá)."""
+    """Callback của engine (trong transaction của `engine.act`, instance đã được khoá).
+
+    Chỉ chạy một lần cho mỗi đề nghị: hồ sơ phải đang ở trạng thái "Đang duyệt" (chống ghi trùng khi
+    callback bị gọi lại).
+    """
     locked = _lock(bcr)
-    old = locked.status
+    if locked.status != IN_APPROVAL:
+        raise BudgetChangeError(NOT_IN_APPROVAL)
     note, entries = "", 0
     if status == WF_APPROVED:
         try:
             entries = len(_apply(locked, None))  # thao tác hệ thống khi hồ sơ được duyệt xong
-        except InsufficientBudget:
-            locked.status, note = BLOCKED, BLOCKED_NOTE
-            _notify_blocked(locked)
+        except (InsufficientBudget, _Rerouted) as e:
+            note = REROUTE_NOTE if isinstance(e, _Rerouted) else BLOCKED_NOTE
+            locked.status = BLOCKED
+            _notify_blocked(locked, note)
         else:
             locked.status = APPROVED
     elif status == WF_REJECTED:
@@ -190,19 +236,26 @@ def on_workflow_finished(bcr, status: str) -> None:
     else:
         raise ValueError(f"Kết quả luồng duyệt không hợp lệ: {status}")
     locked.save(update_fields=["status"])
-    _status_changed(locked, old, None, workflow_status=status, entries=entries, note=note)
+    _status_changed(locked, IN_APPROVAL, None, workflow_status=status, entries=entries, note=note)
     _sync(bcr, locked)
 
 
 @transaction.atomic
 def retry_apply(bcr, user) -> None:
-    """FAD quản trị ngân sách ghi lại điều chuyển bị chặn; dòng nguồn vẫn thiếu thì raise `InsufficientBudget`."""
+    """FAD quản trị ngân sách ghi lại đề nghị bị chặn.
+
+    Dòng nguồn vẫn thiếu → `InsufficientBudget`; luỹ kế đã vượt cấp đã duyệt → `BudgetChangeError`
+    (phải trình lại cấp cao hơn, FAD không ghi thay được).
+    """
     if not has_role(user, FAD_BUDGET_ADMIN):
         raise BudgetChangeError("Chỉ FAD quản trị ngân sách được ghi lại đề nghị ngân sách")
     locked = _lock(bcr)
     if locked.status != BLOCKED:
         raise BudgetChangeError("Đề nghị không ở trạng thái chờ ghi ngân sách")
-    entries = _apply(locked, user)
+    try:
+        entries = _apply(locked, user)
+    except _Rerouted as e:
+        raise BudgetChangeError(str(e)) from e
     locked.status = APPROVED
     locked.save(update_fields=["status"])
     _status_changed(locked, BLOCKED, user, entries=len(entries))
@@ -272,29 +325,54 @@ def _within_year_months(start, months: int) -> int:
     return min(months, 13 - start.month)
 
 
+def _requested_lines(req, shortfalls) -> list:
+    """Các dòng ngân sách người gọi xin bổ sung, phải thuộc phân bổ của tờ trình (bỏ trùng, theo pk)."""
+    funded = set(req.fundings.values_list("budget_line_id", flat=True))
+    lines, seen = [], set()
+    for line, _ in shortfalls:
+        if line.pk not in funded:
+            raise BudgetChangeError(f"Dòng ngân sách {line} không thuộc phân bổ của tờ trình")
+        if line.pk not in seen:
+            seen.add(line.pk)
+            lines.append(line)
+    return lines
+
+
 @transaction.atomic
 def prefill_from_shortfall(req, shortfalls, user) -> list[BudgetChangeRequest]:
-    """Tạo (hoặc cập nhật) đề nghị bổ sung nháp cho từng dòng ngân sách thiếu của tờ trình `req`.
+    """Tạo sẵn đề nghị bổ sung nháp cho các dòng ngân sách thiếu của tờ trình `req` (spec 4.1).
 
-    `shortfalls`: `[(dòng ngân sách, số thiếu)]` như `InsufficientBudget.shortfalls`. Số tiền làm tròn lên
-    đồng; kỳ bắt đầu / số tháng lấy từ tờ trình (giới hạn trong năm). Đã có đề nghị nháp cho cùng
-    (tờ trình, dòng) thì cập nhật thay vì tạo trùng.
+    `shortfalls`: `[(dòng ngân sách, số thiếu)]` như `InsufficientBudget.shortfalls` — chỉ dùng để biết
+    người gọi xin bổ sung những dòng nào; mỗi dòng phải thuộc phân bổ của tờ trình và **số tiền được
+    tính lại** từ ngân sách hiện tại (`ledger.check_reserve`), không tin số của người gọi.
+
+    Chỉ người lập / người đề nghị tờ trình gọi được, và chỉ khi tờ trình đang bị chặn vì thiếu ngân sách
+    (nháp, trả lại, hoặc đã duyệt mà chưa giữ chỗ được). Kỳ bắt đầu / số tháng lấy từ tờ trình (giới hạn
+    trong năm). Mỗi (tờ trình, dòng ngân sách) chỉ có một đề nghị còn sống: bản nháp được cập nhật số
+    tiền, bản đã nộp/đã duyệt được dùng lại nguyên trạng (không tạo bản trùng).
     """
-    if not req.visible_to(user):
-        raise BudgetChangeError("Bạn không có quyền xem tờ trình này")
-    req = Requisition.objects.select_for_update().get(pk=req.pk)  # tuần tự hoá các lần tạo sẵn
+    if not _is_owner(req, user):
+        raise BudgetChangeError("Chỉ người lập hoặc người đề nghị tờ trình được tạo đề nghị bổ sung")
+    if req.status not in PREFILL_REQ_STATUSES:
+        raise BudgetChangeError("Tờ trình không ở trạng thái thiếu ngân sách")
+    lines = _requested_lines(req, shortfalls)
+    req = requisitions.Requisition.objects.select_for_update().get(pk=req.pk)  # tuần tự hoá các lần tạo sẵn
+    recomputed, _ = ledger.check_reserve(req.budget_allocations(), start=req.reserve_start, months=req.months)
+    if not recomputed:
+        raise BudgetChangeError("Tờ trình không thiếu ngân sách")
+    needed = {line.pk: amount for line, amount in recomputed}
+
     start = req.reserve_start
     months = _within_year_months(start, req.months)
-    label = req.number or f"nháp #{req.pk}"
-    reason = f"Bổ sung ngân sách cho tờ trình {label}"
+    reason = f"Bổ sung ngân sách cho tờ trình {req.number or f'nháp #{req.pk}'}"
     results, events = [], []
-    for line, shortfall in shortfalls:
-        amount = Decimal(shortfall).quantize(Decimal("1"), rounding=ROUND_CEILING)
+    for line in lines:
+        amount = Decimal(needed.get(line.pk, 0)).quantize(Decimal("1"), rounding=ROUND_CEILING)
         if amount <= 0:
             continue
         existing = (
             BudgetChangeRequest.objects.select_for_update()
-            .filter(requisition=req, to_line=line, kind=SUPPLEMENT, status=DRAFT)
+            .filter(requisition=req, to_line=line, kind=SUPPLEMENT, status__in=LIVE_STATUSES)
             .order_by("pk").first()
         )
         if existing is None:
@@ -303,12 +381,15 @@ def prefill_from_shortfall(req, shortfalls, user) -> list[BudgetChangeRequest]:
                 requisition=req, requester_id=req.requester_id, created_by=user,
             )
             events.append(("budget_change.prefilled", bcr, {"requisition": req.pk, "amount_vnd": amount}))
-        else:
+        elif existing.status == DRAFT:
             bcr, old_amount = existing, existing.amount_vnd
             bcr.amount_vnd, bcr.start, bcr.months = amount, start, months
             bcr.save(update_fields=["amount_vnd", "start", "months"])
-            events.append(("budget_change.prefill_updated", bcr,
-                           {"requisition": req.pk, "amount_vnd": [old_amount, amount]}))
+            if old_amount != amount:
+                events.append(("budget_change.prefill_updated", bcr,
+                               {"requisition": req.pk, "amount_vnd": [old_amount, amount]}))
+        else:
+            bcr = existing  # đã nộp / đã duyệt: dùng lại, không sửa và không tạo bản trùng
         results.append(bcr)
     for action, bcr, changes in events:  # audit sau cùng (sau mọi khoá/ghi)
         audit.record(action, bcr, actor=user, changes=changes)

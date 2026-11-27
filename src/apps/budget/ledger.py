@@ -152,6 +152,22 @@ def _lock(line_ids) -> dict[int, BudgetLine]:
     return {line.pk: line for line in qs}
 
 
+def lock_lines(line_ids) -> dict[int, BudgetLine]:
+    """Khoá các dòng ngân sách theo thứ tự pk tăng dần (tránh deadlock); trả `{pk: dòng}`.
+
+    Dùng khi người gọi cần tuần tự hoá một kiểm tra của mình trên các dòng này trước khi ghi bút toán.
+    """
+    return _lock(line_ids)
+
+
+def has_entries(source) -> bool:
+    """Đã có bút toán nào gắn với hồ sơ nguồn `source` chưa (chống ghi trùng)."""
+    source_type, source_id = _source_key(source)
+    if not source_type:
+        raise ValueError("Cần hồ sơ nguồn để kiểm tra bút toán đã ghi.")
+    return BudgetEntry.objects.filter(source_type=source_type, source_id=source_id).exists()
+
+
 def _line_for_year(line: BudgetLine, year: int) -> BudgetLine:
     other, _ = BudgetLine.objects.get_or_create(
         year=year,
@@ -383,8 +399,8 @@ def post_allocated(
 
     Kỳ ngoài năm của dòng ghi vào dòng cùng chiều của năm đó (tự tạo nếu chưa có), như `reserve`.
     Chân âm (ghi giảm) phải đủ số khả dụng cả năm trên dòng đích, thiếu thì raise `InsufficientBudget`
-    (không ghi gì). Khoá mọi dòng theo pk trước khi kiểm tra; MỘT bản audit `budget.entries_posted`
-    gắn với `source` ở cuối.
+    (không ghi gì). Hồ sơ nguồn đã có bút toán thì raise `ValueError` (chống ghi trùng). Khoá mọi dòng
+    theo pk trước khi kiểm tra; MỘT bản audit `budget.entries_posted` gắn với `source` ở cuối.
     """
     if source is None:
         raise ValueError("Bút toán phân bổ phải gắn với hồ sơ nguồn.")
@@ -392,6 +408,8 @@ def post_allocated(
     with transaction.atomic():
         others = _other_year_lines(plan, create=True)
         locked = _lock([line.pk for line, _, _ in plan] + [o.pk for o in others.values()])
+        if has_entries(source):
+            raise ValueError(f"Hồ sơ {source} đã có bút toán — không ghi trùng.")
         rows = [(locked[_target(line, period, others).pk], period, amt) for line, period, amt in plan]
         shortfalls = _debit_shortfalls([(target, amt) for target, _, amt in rows])
         if shortfalls:
