@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "apps.vendors",
     "apps.workflow",
     "apps.notifications",
+    "apps.requisitions",
 ]
 
 MIDDLEWARE = [

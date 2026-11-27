@@ -42,6 +42,7 @@ from .models import (
     APPROVE,
     APPROVED,
     BUDGET_CHANGE,
+    CANCELLED,
     COMMENTED,
     MEETING,
     PENDING,
@@ -393,3 +394,26 @@ def act(task, user, decision: str, comment: str = "", *, on_behalf_of=None) -> W
     _send_notifications(run)
     _flush_audit(run, subject)
     return task
+
+
+@transaction.atomic
+def cancel(instance, user, reason: str) -> WorkflowInstance:
+    """Huỷ hồ sơ đang duyệt theo yêu cầu của hồ sơ nguồn (ví dụ người lập huỷ tờ trình).
+
+    Các bước còn chờ chuyển "Bỏ qua" kèm lý do; không gọi `on_workflow_finished` (người gọi tự cập
+    nhật hồ sơ nguồn) và không gửi thông báo. Khoá instance rồi task như `act`; audit ghi sau cùng.
+    """
+    instance = WorkflowInstance.objects.select_for_update().get(pk=instance.pk)
+    if instance.status != RUNNING:
+        raise AlreadyProcessed("Luồng duyệt đã kết thúc")
+    now = timezone.now()
+    skipped = []
+    for task in instance.tasks.select_for_update().filter(status__in=(PENDING, WAITING)).order_by("pk"):
+        _skip(task, reason, now)
+        skipped.append(task.pk)
+    instance.status = CANCELLED
+    instance.finished_at = now
+    instance.save(update_fields=["status", "finished_at"])
+    audit.record("workflow.cancelled", instance.subject, actor=user,
+                 changes={"instance": instance.pk, "reason": reason, "skipped_tasks": skipped})
+    return instance

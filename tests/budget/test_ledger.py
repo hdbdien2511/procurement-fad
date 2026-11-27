@@ -337,3 +337,16 @@ def test_same_source_reserved_twice_then_released(line_2026, user, req):
     assert list(BudgetEntry.objects.filter(kind=RELEASE).values_list("amount", flat=True)) == [
         Decimal("-150")
     ]
+
+
+def test_check_reserve_is_dry_run(line_2026, user):
+    from apps.budget.ledger import check_reserve
+
+    post(line_2026, date(2026, 1, 1), ORIGINAL, Decimal("50000000"), source=None, user=user)
+    count = BudgetEntry.objects.count()
+    # 120tr / 12 tháng từ 07/2026: 60tr thuộc 2026 (thiếu 10tr), 60tr thuộc 2027 (chưa có ngân sách)
+    shortfalls, warnings = check_reserve([(line_2026, Decimal("120000000"))], start=date(2026, 7, 1), months=12)
+    assert shortfalls == [(line_2026, Decimal("10000000"))]
+    assert len(warnings) == 1 and warnings[0].startswith("Năm 2027 chưa có ngân sách")
+    assert BudgetEntry.objects.count() == count
+    assert not BudgetLine.objects.filter(year=2027).exists()

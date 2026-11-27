@@ -163,17 +163,8 @@ def _line_for_year(line: BudgetLine, year: int) -> BudgetLine:
     return other
 
 
-def reserve(
-    allocations: list[tuple[BudgetLine, Decimal]], *, start: date, months: int, source, user
-) -> list[str]:
-    """Giữ chỗ ngân sách, phân bổ đều theo tháng.
-
-    `start` không được sớm hơn năm của dòng. Kỳ thuộc năm của dòng: kiểm tra đủ ngân sách trên số khả dụng cả năm, thiếu thì raise
-    `InsufficientBudget` (kiểm tra mọi dòng trước, không ghi gì). Kỳ thuộc năm sau: ghi vào dòng
-    cùng chiều của năm đó (tự tạo nếu chưa có) và trả cảnh báo nếu năm đó chưa đủ ngân sách.
-    """
-    if source is None:
-        raise ValueError("Giữ chỗ phải gắn với hồ sơ nguồn.")
+def _prepare(allocations, start: date, months: int):
+    """Kiểm tra đầu vào và lập kế hoạch `(dòng gốc, kỳ, số tiền)` phân bổ đều theo tháng."""
     allocations = [(line, _to_vnd(amount)) for line, amount in allocations]
     for line, amount in allocations:
         if amount <= 0:
@@ -182,14 +173,78 @@ def reserve(
             raise ValueError(
                 f"Kỳ bắt đầu {start:%m/%Y} sớm hơn năm {line.year} của dòng ngân sách {line}."
             )
+    plan: list[tuple[BudgetLine, date, Decimal]] = [
+        (line, period, amt)
+        for line, amount in allocations
+        for period, amt in allocate(amount, start, months)
+    ]
+    return allocations, plan
+
+
+def _shortfalls(plan, lines: dict[int, BudgetLine]) -> list[tuple[BudgetLine, Decimal]]:
+    """Phần thiếu trên số khả dụng cả năm, chỉ tính các kỳ thuộc năm của dòng (gom theo dòng)."""
+    required: dict[int, Decimal] = defaultdict(lambda: ZERO)
+    for line, period, amt in plan:
+        if period.year == line.year:
+            required[line.pk] += amt
+    shortfalls = []
+    for pk, need in required.items():
+        short = need - balance(lines[pk]).available
+        if short > 0:
+            shortfalls.append((lines[pk], short))
+    return shortfalls
+
+
+def _future_warning(year: int, label: str, amount: Decimal, done: bool) -> str:
+    verb = "đã ghi" if done else "sẽ ghi"
+    return (
+        f"Năm {year} chưa có ngân sách cho dòng {label}: "
+        f"{verb} giữ chỗ {format_vnd(amount)} đ, cần bổ sung ngân sách."
+    )
+
+
+def check_reserve(
+    allocations: list[tuple[BudgetLine, Decimal]], *, start: date, months: int
+) -> tuple[list[tuple[BudgetLine, Decimal]], list[str]]:
+    """Chạy thử `reserve` (không khoá, không ghi gì): trả `(shortfalls, warnings)` như `reserve` sẽ gặp.
+
+    Cảnh báo năm sau tính trên dòng cùng chiều của năm đó nếu đã có (chưa có = ngân sách 0).
+    """
+    _, plan = _prepare(allocations, start, months)
+    lines = {line.pk: line for line, _, _ in plan}
+    shortfalls = _shortfalls(plan, lines)
+    future_amounts: dict[tuple[int, int], Decimal] = defaultdict(lambda: ZERO)
+    for line, period, amt in plan:
+        if period.year != line.year:
+            future_amounts[(line.pk, period.year)] += amt
+    warnings = []
+    for (line_pk, year), amt in sorted(future_amounts.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+        line = lines[line_pk]
+        other = BudgetLine.objects.filter(
+            year=year, budget_unit_id=line.budget_unit_id, cost_code_id=line.cost_code_id,
+            project_id=line.project_id, location_id=line.location_id,
+        ).first()
+        available = balance(other).available if other is not None else ZERO
+        if available - amt < 0:
+            warnings.append(_future_warning(year, line.short_label, amt, done=False))
+    return shortfalls, warnings
+
+
+def reserve(
+    allocations: list[tuple[BudgetLine, Decimal]], *, start: date, months: int, source, user
+) -> list[str]:
+    """Giữ chỗ ngân sách, phân bổ đều theo tháng.
+
+    `start` không được sớm hơn năm của dòng. Kỳ thuộc năm của dòng: kiểm tra đủ ngân sách trên số khả dụng cả năm, thiếu thì raise
+    `InsufficientBudget` (kiểm tra mọi dòng trước, không ghi gì). Kỳ thuộc năm sau: ghi vào dòng
+    cùng chiều của năm đó (tự tạo nếu chưa có) và trả cảnh báo nếu năm đó chưa đủ ngân sách.
+    Muốn biết trước kết quả mà không ghi gì: `check_reserve`.
+    """
+    if source is None:
+        raise ValueError("Giữ chỗ phải gắn với hồ sơ nguồn.")
+    allocations, plan = _prepare(allocations, start, months)
     with transaction.atomic():
-        # 1. Kế hoạch: (dòng gốc, kỳ, số tiền).
-        plan: list[tuple[BudgetLine, date, Decimal]] = [
-            (line, period, amt)
-            for line, amount in allocations
-            for period, amt in allocate(amount, start, months)
-        ]
-        # Tạo trước dòng năm sau (theo thứ tự pk) để khoá cùng lúc với dòng gốc.
+        # 1. Tạo trước dòng năm sau (theo thứ tự pk) để khoá cùng lúc với dòng gốc.
         future: dict[tuple[int, int], BudgetLine] = {}
         for line, period, _ in sorted(plan, key=lambda r: (r[0].pk, r[1])):
             if period.year != line.year and (line.pk, period.year) not in future:
@@ -198,15 +253,7 @@ def reserve(
         locked = _lock([line.pk for line, _ in allocations] + [f.pk for f in future.values()])
 
         # 2. Kiểm tra đủ ngân sách trong năm của dòng (luỹ kế cả năm).
-        required: dict[int, Decimal] = defaultdict(lambda: ZERO)
-        for line, period, amt in plan:
-            if period.year == line.year:
-                required[line.pk] += amt
-        shortfalls = []
-        for pk, need in required.items():
-            short = need - balance(locked[pk]).available
-            if short > 0:
-                shortfalls.append((locked[pk], short))
+        shortfalls = _shortfalls(plan, locked)
         if shortfalls:
             raise InsufficientBudget(shortfalls)
 
@@ -225,10 +272,7 @@ def reserve(
         for target_pk, amt in sorted(future_amounts.items(), key=lambda kv: locked[kv[0]].year):
             target = locked[target_pk]
             if balance(target).available < 0:
-                warnings.append(
-                    f"Năm {target.year} chưa có ngân sách cho dòng {target.short_label}: "
-                    f"đã ghi giữ chỗ {format_vnd(amt)} đ, cần bổ sung ngân sách."
-                )
+                warnings.append(_future_warning(target.year, target.short_label, amt, done=True))
 
         audit.record(
             "budget.reserved",
