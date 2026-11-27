@@ -220,3 +220,84 @@ def test_base_layout_anonymous_no_query(django_assert_num_queries):
     with django_assert_num_queries(0):
         html = render_to_string("base.html", request=r)
     assert "Việc chờ tôi" not in html
+
+
+# --- sửa theo review ---
+@pytest.mark.parametrize("bad", ["--amount_vnd", "-", "---amount_vnd", "-,,", "--"])
+def test_malformed_sort_is_ignored(owner, units, bad):
+    mk(owner, units["cd"], 1)
+    page = apply_table(req(sort=bad), Dummy.objects.all(), spec())
+    assert page.sort == ["-amount_vnd"] and len(page.rows) == 1
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"min": "abc"}, {"unit": "abc"}, {"q": "a\x00b"}, {"status": "a\x00b"}],
+)
+def test_bad_values_do_not_crash(owner, units, params):
+    mk(owner, units["cd"], 1)
+    s = spec(filters={"min": "amount_vnd__gte", "unit": "unit_id", "status": "finished_status"})
+    page = apply_table(req(**params), Dummy.objects.all(), s)
+    assert page.params == {} or list(page.params) == ["status"]
+    render_to_string("ui/table.html", {"table": page, "spec": s}, request=req(**params))
+
+
+def test_header_link_on_default_sorted_column_changes_order(owner, units):
+    from apps.ui.templatetags.vn import next_sort
+
+    mk(owner, units["cd"], 1)
+    mk(owner, units["cd"], 2)
+    first = apply_table(req(), Dummy.objects.all(), spec())
+    assert [r.amount_vnd for r in first.rows] == [2, 1]
+    ns = next_sort(first, "amount_vnd")
+    assert ns == "amount_vnd"
+    second = apply_table(req(sort=ns), Dummy.objects.all(), spec())
+    assert [r.amount_vnd for r in second.rows] == [1, 2]
+    assert next_sort(second, "amount_vnd") == "-amount_vnd"
+
+
+def test_related_columns_constant_queries(owner, units, django_assert_max_num_queries):
+    for i in range(10):
+        mk(owner, units["cd"], i)
+    s = spec(page_size=50)
+    r = req()
+    with django_assert_max_num_queries(6):  # count + sums + select, không phụ thuộc số dòng
+        page = apply_table(r, Dummy.objects.all(), s)
+        render_to_string("ui/table.html", {"table": page, "spec": s}, request=r)
+        export.to_xlsx(s, page.qs)
+    n = len(page.rows)
+    assert n == 10
+
+
+def test_xlsx_formula_injection_neutralised(owner, units):
+    evil = '=HYPERLINK("http://x","y")'
+    u = OrgUnitFactory(name=evil)
+    mk(owner, u, 1)
+    mk(owner, OrgUnitFactory(name="+cmd"), 2)
+    data = export.to_xlsx(spec(), Dummy.objects.order_by("pk"))
+    ws = load_workbook(io.BytesIO(data)).active
+    assert ws["A2"].data_type == "s" and ws["A2"].value == evil
+    assert ws["A3"].data_type == "s"
+
+
+def test_group_totals_rendered_as_subtotal_rows(owner, units):
+    mk(owner, units["cd"], 100)
+    mk(owner, units["cd"], 50)
+    mk(owner, units["hn"], 7)
+    s = spec(group_by="unit__name")
+    r = req()
+    html = render_to_string("ui/table.html", {"table": apply_table(r, Dummy.objects.all(), s), "spec": s}, request=r)
+    assert "Tổng phụ: Chương Dương" in html and "Tổng phụ: Hà Nội" in html
+    assert "150" in html
+
+
+def test_base_has_no_missing_htmx_reference():
+    assert "htmx" not in render_to_string("base.html", request=_anon())
+
+
+def _anon():
+    from django.contrib.auth.models import AnonymousUser
+
+    r = req()
+    r.user = AnonymousUser()
+    return r

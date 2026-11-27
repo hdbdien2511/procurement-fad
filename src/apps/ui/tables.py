@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from decimal import Decimal
 
+from django.core.exceptions import FieldDoesNotExist, ValidationError
 from django.core.paginator import EmptyPage, Page, PageNotAnInteger, Paginator
+from django.db import DataError, transaction
 from django.db.models import Q, QuerySet, Sum
 
 from apps.core.text import strip_accents
@@ -42,12 +44,34 @@ class TablePage:
 
 def _sort_keys(raw: str, spec: TableSpec) -> list[str]:
     allowed = {c.key for c in spec.columns if c.sortable}
-    keys = []
+    keys, seen = [], set()
     for part in raw.split(","):
         part = part.strip()
-        if part.lstrip("-") in allowed and part.lstrip("-") not in {k.lstrip("-") for k in keys}:
-            keys.append(part)
+        desc = part.startswith("-")
+        name = part[1:] if desc else part
+        if name in allowed and name not in seen:
+            seen.add(name)
+            keys.append(("-" if desc else "") + name)
     return keys
+
+
+def _related_paths(model, spec: TableSpec) -> list[str]:
+    """Đường FK (nhiều-một/một-một) trong khoá cột, để select_related tránh N+1."""
+    paths = set()
+    for c in spec.columns:
+        parts = c.key.split("__")[:-1]
+        m, acc = model, []
+        for part in parts:
+            try:
+                f = m._meta.get_field(part)
+            except FieldDoesNotExist:
+                break
+            if not (f.is_relation and (f.many_to_one or f.one_to_one) and f.related_model):
+                break
+            acc.append(part)
+            paths.add("__".join(acc))
+            m = f.related_model
+    return sorted(paths)
 
 
 def _search(qs: QuerySet, q: str, spec: TableSpec) -> QuerySet:
@@ -63,12 +87,20 @@ def apply_table(request, qs: QuerySet, spec: TableSpec) -> TablePage:
     get = request.GET
     params = {}
     for param, lookup in spec.filters.items():
-        value = get.get(param, "")
-        if value != "":
-            qs = qs.filter(**{lookup: value})
-            params[param] = value
+        value = get.get(param, "").replace("\x00", "")
+        if value == "":
+            continue
+        try:
+            candidate = qs.filter(**{lookup: value})
+            with transaction.atomic():
+                candidate.order_by().exists()  # lỗi kiểu dữ liệu/tràn số bộc lộ tại đây
+        except (ValueError, ValidationError, DataError):
+            continue  # giá trị không hợp lệ: bỏ qua bộ lọc này
+        qs = candidate
+        params[param] = value
 
-    q = get.get("q", "").strip()
+    qs = qs.select_related(*_related_paths(qs.model, spec))
+    q = get.get("q", "").replace("\x00", "").strip()
     if q and spec.search_fields:
         qs = _search(qs, q, spec)
 

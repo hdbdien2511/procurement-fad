@@ -57,6 +57,8 @@ def to_xlsx(spec: TableSpec, qs) -> bytes:
             row.append(v)
         ws.append(row)
         for cell, c in zip(ws[ws.max_row], cols):
+            if cell.data_type == "f":  # chuỗi người dùng bắt đầu bằng "=" không được thành công thức
+                cell.data_type = "s"
             if c.money:
                 cell.number_format = MONEY_FORMAT
 

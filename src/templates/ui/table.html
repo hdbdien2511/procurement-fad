@@ -22,6 +22,18 @@
     <tr><td class="empty" colspan="{{ spec.columns|length|add:spec.selectable }}">Không có dữ liệu phù hợp</td></tr>
     {% endfor %}
   </tbody>
+  {% if table.group_totals and table.rows %}
+  <tbody class="subtotals">
+    {% for group, sums in table.group_totals.items %}
+    <tr class="subtotal-row">
+      {% if spec.selectable %}<td></td>{% endif %}
+      {% for col in spec.columns %}
+      <td{% if col.money %} class="num"{% endif %}>{% if forloop.first and not col.sum %}Tổng phụ: {{ group|default_if_none:"(trống)" }}{% elif col.sum %}{% with t=sums|get_item:col.key %}{% if col.money %}{{ t|vnd }}{% else %}{{ t }}{% endif %}{% endwith %}{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% endif %}
   {% if table.totals and table.rows %}
   <tfoot>
     <tr class="totals-row">

@@ -52,12 +52,15 @@ def qs_with(context, **overrides):
 
 @register.simple_tag
 def next_sort(table, key):
-    """Chuỗi `sort` mới khi bấm tiêu đề cột: tăng -> giảm -> bỏ cột; giữ các cột khác."""
+    """Chuỗi `sort` khi bấm tiêu đề cột: chưa sắp -> tăng; tăng -> giảm; giảm -> tăng.
+
+    Cột đã có trong `sort` (kể cả sắp mặc định) được đảo tại chỗ; các cột khác giữ nguyên.
+    """
     cur = list(table.sort)
     if key in cur:
         cur = [("-" + key) if k == key else k for k in cur]
     elif "-" + key in cur:
-        cur = [k for k in cur if k != "-" + key]
+        cur = [key if k == "-" + key else k for k in cur]
     else:
         cur = [key] + cur
     return ",".join(cur)
