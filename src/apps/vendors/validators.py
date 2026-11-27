@@ -8,8 +8,12 @@ _BANK_RE = re.compile(r"^\d{6,20}$")
 
 
 def normalize_tax_code(value) -> str:
-    """Bỏ mọi khoảng trắng; giữ hậu tố chi nhánh '-NNN'."""
-    return re.sub(r"\s+", "", "" if value is None else str(value))
+    """Bỏ mọi khoảng trắng; giữ hậu tố chi nhánh '-NNN'. Chỉ nhận chuỗi (số Excel đã mất số 0 đầu)."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise TypeError("Mã số thuế phải là chuỗi")
+    return re.sub(r"\s+", "", value)
 
 
 def validate_tax_code(value: str, kind: str = "ORG") -> None:

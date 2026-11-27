@@ -44,7 +44,8 @@ def test_validate_tax_code():
 
 def test_normalize_tax_code():
     assert normalize_tax_code(" 0300 4815 51-006 ") == "0300481551-006"
-    assert normalize_tax_code(300481551) == "300481551"
+    with pytest.raises(TypeError):
+        normalize_tax_code(300481551)
 
 
 def test_validate_bank_account():
@@ -190,3 +191,37 @@ def test_import_vendors_command(demo_xlsx, db, capsys):
     assert "Chạy thử" in out and Vendor.objects.count() == 0
     call_command("import_vendors", str(demo_xlsx), "--commit")
     assert Vendor.objects.count() == 10
+
+
+def test_numeric_tax_cell_rejected(db, user):
+    r = import_vendors_from_rows([row("Cá nhân", 1000000019, "Ông B")], user, dry_run=False)
+    assert [i.message for i in r.issues] == ["Mã số thuế phải nhập dạng văn bản (mất số 0 đầu)"]
+    assert Vendor.objects.count() == 0
+
+
+def test_kind_label_normalized(db, user):
+    import unicodedata
+
+    label = unicodedata.normalize("NFD", " TỔ CHỨC ")
+    import_vendors_from_rows([row(label, "0300481551", "A")], user, dry_run=False)
+    assert Vendor.objects.get().kind == "ORG"
+
+
+def test_dry_run_updated_count_matches_apply(db, user):
+    Vendor.objects.create(code="0300481551", tax_code="0300481551", name="Cũ", kind="ORG")
+    Vendor.objects.create(code="0300481552", tax_code="0300481552", name="Giữ", kind="ORG")
+    rows = [row("Tổ chức", "0300481551", "Mới", 2), row("Tổ chức", "0300481552", "Giữ", 3),
+            row("Tổ chức", "0300481553", "Thêm", 4)]
+    dry = import_vendors_from_rows(rows, user)
+    real = import_vendors_from_rows(rows, user, dry_run=False)
+    assert dry.created == real.created == {"vendors": 1, "vendors_updated": 1}
+    assert AuditEvent.objects.filter(action="vendor.updated").count() == 1
+
+
+def test_change_status_same_status_noop(db, user):
+    v = Vendor.objects.create(code="1", tax_code="0300481551", name="A", status="ACTIVE")
+    stale = Vendor.objects.get(pk=v.pk)
+    Vendor.objects.filter(pk=v.pk).update(status="SUSPENDED")
+    stale.change_status("SUSPENDED", user, "x")
+    assert stale.status == "SUSPENDED"
+    assert not AuditEvent.objects.filter(action="vendor.status_changed").exists()

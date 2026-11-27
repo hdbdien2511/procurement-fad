@@ -53,6 +53,7 @@ class Vendor(models.Model):
         with transaction.atomic():
             old = Vendor.objects.select_for_update().get(pk=self.pk).status
             if old == new_status:
+                self.status = old
                 return
             self.status = new_status
             self.save(update_fields=["status"])
