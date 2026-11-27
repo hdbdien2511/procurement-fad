@@ -206,7 +206,7 @@ def test_base_layout(owner, django_assert_num_queries):
     r.user = owner
     r._messages = CookieStorage(r)
     with django_assert_num_queries(1):  # đúng một truy vấn count
-        html = render_to_string("home.html", request=r)
+        html = render_to_string("base.html", request=r)
     assert "Mua sắm HSC" in html and 'lang="vi"' in html
     assert "Việc chờ tôi" in html and 'href="#main"' in html
     assert "2 thông báo chưa đọc" in html

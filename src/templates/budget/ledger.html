@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>Sổ cái ngân sách</h1>
+<dl class="facts">
+  <dt>Dòng ngân sách</dt><dd>{{ line }}</dd>
+  <dt>Năm</dt><dd>{{ line.year }}</dd>
+  <dt>Đơn vị quản lý ngân sách</dt><dd>{{ line.budget_unit }}</dd>
+  <dt>Mã chi phí · dự án · địa điểm</dt><dd>{{ line.short_label }}</dd>
+</dl>
+<form method="get" class="filters">
+  {% for f in filter_fields %}
+  <p><label for="f-{{ f.name }}">{{ f.label }}</label>
+    <select id="f-{{ f.name }}" name="{{ f.name }}">
+      <option value="">— Tất cả —</option>
+      {% for value, text in f.options %}<option value="{{ value }}"{% if f.value == value %} selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select>
+  </p>
+  {% endfor %}
+  <p><button type="submit">Lọc</button> <a class="button-link" href="?">Bỏ lọc</a></p>
+</form>
+{% include "ui/table.html" %}
+<p><a href="{% url 'budget_list' %}">Quay lại danh sách dòng ngân sách</a></p>
+{% endblock %}

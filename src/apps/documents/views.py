@@ -2,12 +2,17 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 from django.http import FileResponse, Http404, HttpResponseForbidden
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET
 
 from apps.audit.service import record
+from apps.budget_changes.models import BudgetChangeRequest
+from apps.core.text import strip_accents
+from apps.requisitions.models import Requisition
 
+from . import search as doc_search
 from .models import Document
 from .permissions import can_view_object
 from .storage import absolute_path
@@ -51,3 +56,30 @@ def download(request, pk):
 @require_GET
 def view_inline(request, pk):
     return _serve(request, pk, inline=True)
+
+
+@login_required
+@require_GET
+def search(request):
+    """Tìm chứng từ (toàn văn, không phân biệt dấu) và hồ sơ (số / tiêu đề) mà người dùng được xem."""
+    query = (request.GET.get("q") or "").strip()
+    documents, requisitions, budget_changes = [], [], []
+    if query:
+        documents = list(doc_search.search_documents(request.user, query)[:50])
+        requisitions = list(
+            Requisition.objects.visible_to(request.user)
+            .filter(Q(number__unaccent__icontains=strip_accents(query))
+                    | Q(title__unaccent__icontains=strip_accents(query)))[:50]
+        )
+        budget_changes = list(
+            BudgetChangeRequest.objects.visible_to(request.user)
+            .filter(Q(number__unaccent__icontains=strip_accents(query))
+                    | Q(reason__unaccent__icontains=strip_accents(query)))[:50]
+        )
+    return render(request, "documents/search.html", {
+        "heading": "Tìm kiếm chứng từ và hồ sơ",
+        "q": query,
+        "documents": documents,
+        "requisitions": requisitions,
+        "budget_changes": budget_changes,
+    })

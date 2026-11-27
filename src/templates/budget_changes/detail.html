@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ bcr }}{% endblock %}
+{% block content %}
+<h1>{{ bcr }} · {{ bcr.get_kind_display }}</h1>
+<dl class="facts">
+  <dt>Trạng thái</dt><dd>{{ bcr.get_status_display }}</dd>
+  <dt>Số tiền</dt><dd class="num">{{ bcr.amount_vnd|vnd }} đ</dd>
+  <dt>Bằng chữ</dt><dd>{{ bcr.amount_vnd|bang_chu }}</dd>
+  <dt>Kỳ bắt đầu</dt><dd>{{ bcr.start|date:"m/Y" }} · phân bổ {{ bcr.months }} tháng</dd>
+  <dt>Dòng ngân sách nhận</dt><dd>{{ bcr.to_line }} · khả dụng {{ to_balance.available|vnd }} đ</dd>
+  <dt>Dòng ngân sách nguồn</dt><dd>{% if bcr.from_line %}{{ bcr.from_line }} · khả dụng {{ from_balance.available|vnd }} đ{% else %}—{% endif %}</dd>
+  <dt>Tờ trình liên quan</dt><dd>{% if bcr.requisition %}<a href="{% url 'requisition_detail' bcr.requisition_id %}">{{ bcr.requisition }}</a>{% else %}—{% endif %}</dd>
+  <dt>Lý do</dt><dd>{{ bcr.reason }}</dd>
+  <dt>Người đề nghị</dt><dd>{{ bcr.requester.get_full_name|default:bcr.requester.username }} ({{ bcr.requester_unit.name|default:"chưa có đơn vị" }})</dd>
+</dl>
+
+{% if submit_errors %}
+<div class="message error">
+  <p>Chưa nộp được vì:</p>
+  <ul>{% for error in submit_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+{% if can_submit %}
+<form method="post" action="{% url 'budget_change_submit' bcr.pk %}">{% csrf_token %}<button type="submit">Nộp đề nghị</button></form>
+{% endif %}
+
+{% include "workflow/_history.html" %}
+{% endblock %}

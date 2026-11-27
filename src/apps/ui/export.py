@@ -15,8 +15,11 @@ class ExportTooLarge(Exception):
 
 
 def _value(obj, path: str):
+    """Giá trị theo khoá cột; khoá trỏ tới phương thức không tham số thì gọi để lấy nhãn."""
     for part in path.split("__"):
         obj = getattr(obj, part, None)
+        if callable(obj):
+            obj = obj()
         if obj is None:
             return None
     return obj

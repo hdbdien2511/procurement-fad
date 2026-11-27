@@ -1,0 +1,46 @@
+{% load vn %}
+<h2 id="lich-su">Lịch sử duyệt</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Các bước duyệt của hồ sơ</caption>
+  <thead>
+    <tr>
+      <th scope="col">Bước</th><th scope="col">Loại</th><th scope="col">Vai trò</th><th scope="col">Đơn vị</th>
+      <th scope="col">Trạng thái</th><th scope="col">Người xử lý</th><th scope="col">Thời điểm</th>
+      <th scope="col">Ý kiến</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for task in history %}
+    <tr>
+      <td>{{ task.seq }}</td>
+      <td>{{ task.get_kind_display }}</td>
+      <td>{{ task.role_code }}</td>
+      <td>{{ task.org_unit.name|default:"Toàn công ty" }}</td>
+      <td>{{ task.get_status_display }}</td>
+      <td>{% if task.acted_by %}{{ task.acted_by.get_full_name|default:task.acted_by.username }}{% if task.on_behalf_of %} (duyệt thay {{ task.on_behalf_of.get_full_name|default:task.on_behalf_of.username }}){% endif %}{% else %}—{% endif %}</td>
+      <td>{{ task.acted_at|date:"d/m/Y H:i"|default:"—" }}</td>
+      <td>{{ task.comment|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="8">Hồ sơ chưa qua bước duyệt nào</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2 id="nhat-ky-ho-so">Nhật ký hồ sơ</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Các sự kiện audit của hồ sơ</caption>
+  <thead><tr><th scope="col">Thời điểm</th><th scope="col">Người thực hiện</th><th scope="col">Hành động</th><th scope="col">Thay đổi</th></tr></thead>
+  <tbody>
+    {% for event in audit_events %}
+    <tr>
+      <td>{{ event.occurred_at|date:"d/m/Y H:i" }}</td>
+      <td>{{ event.actor_label }}</td>
+      <td>{{ event.action }}</td>
+      <td>{{ event.changes }}</td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="4">Chưa có sự kiện</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

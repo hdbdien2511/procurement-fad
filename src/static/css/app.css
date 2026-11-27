@@ -92,3 +92,33 @@ input, select, textarea { font: inherit; padding: 0.3rem 0.5rem; border: 1px sol
   @page { size: A4 landscape; margin: 12mm; }
 }
 .data-table .subtotal-row td { background: #f1f4f8; font-weight: 600; }
+
+/* Màn hình nghiệp vụ đợt 1 */
+.intro { color: var(--muted); margin: 0 0 0.75rem; max-width: 60rem; }
+.hint { color: var(--muted); font-size: 0.875rem; }
+h2 { font-size: 1.125rem; margin: 1.25rem 0 0.5rem; }
+h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+.button-link { display: inline-block; padding: 0.35rem 0.8rem; border: 1px solid var(--primary); background: var(--surface); color: var(--primary); border-radius: 3px; text-decoration: none; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; justify-content: space-between; margin-bottom: 0.6rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.filters p { margin: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+.filters label { font-size: 0.875rem; color: var(--muted); }
+.actions { margin: 0; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.bulk-bar { border: 1px solid var(--border); background: var(--surface); padding: 0.6rem 0.9rem; margin: 0.8rem 0; }
+.bulk-bar legend { font-weight: 600; padding: 0 0.3rem; }
+.bulk-bar p { margin: 0.35rem 0; }
+.facts { display: grid; grid-template-columns: minmax(12rem, max-content) 1fr; gap: 0.2rem 1rem; background: var(--surface); border: 1px solid var(--border); padding: 0.7rem 0.9rem; margin: 0 0 1rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; }
+.facts dd.num { font-variant-numeric: tabular-nums; }
+.action-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.8rem; }
+.action-bar form { margin: 0; }
+.opinions, .checklist { margin: 0 0 1rem; padding-left: 1.2rem; }
+.formset-row { border-left: 3px solid var(--accent-bg); padding-left: 0.75rem; margin-bottom: 0.6rem; }
+fieldset { border: 1px solid var(--border); background: var(--surface); margin: 0 0 1rem; padding: 0.6rem 0.9rem; }
+legend { font-weight: 600; padding: 0 0.3rem; }
+form p { margin: 0.4rem 0; }
+form label { display: inline-block; min-width: 14rem; vertical-align: top; }
+.filters label, .bulk-bar label, fieldset label input[type="checkbox"] ~ * { min-width: 0; }
+.tabs ul { list-style: none; display: flex; flex-wrap: wrap; gap: 1rem; margin: 0 0 1rem; padding: 0; border-bottom: 1px solid var(--border); }
+.tabs a { display: inline-block; padding: 0.3rem 0; }

@@ -16,7 +16,7 @@
     {% for row in table.rows %}
     <tr>
       {% if spec.selectable %}<td class="col-select"><input type="checkbox" name="ids" value="{{ row.pk }}" aria-label="Chọn dòng {{ row.pk }}"></td>{% endif %}
-      {% for col in spec.columns %}<td{% if col.money %} class="num"{% endif %}>{% cell row col %}</td>{% endfor %}
+      {% for col in spec.columns %}<td{% if col.money %} class="num"{% endif %}>{% if forloop.first and spec.row_url %}<a href="{% url spec.row_url row.pk %}">{% cell row col %}</a>{% else %}{% cell row col %}{% endif %}</td>{% endfor %}
     </tr>
     {% empty %}
     <tr><td class="empty" colspan="{{ spec.columns|length|add:spec.selectable }}">Không có dữ liệu phù hợp</td></tr>

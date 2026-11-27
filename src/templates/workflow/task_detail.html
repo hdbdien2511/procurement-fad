@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}Bước xử lý {{ task.seq }} · {{ subject }}{% endblock %}
+{% block content %}
+<h1>{{ task.get_kind_display }} · {{ subject }}</h1>
+
+<h2>Hồ sơ</h2>
+<dl class="facts">
+  <dt>Hồ sơ</dt><dd>{{ subject }}</dd>
+  <dt>Loại hồ sơ</dt><dd>{{ instance.policy.get_subject_kind_display }}</dd>
+  <dt>Số tiền</dt><dd class="num">{{ instance.snapshot.context.amount_vnd|vnd }} đ</dd>
+  <dt>Bằng chữ</dt><dd>{{ instance.snapshot.context.amount_vnd|bang_chu }}</dd>
+  <dt>Quy tắc thẩm quyền</dt><dd>{{ instance.snapshot.rule.label }} ({{ instance.policy }})</dd>
+  <dt>Trạng thái luồng duyệt</dt><dd>{{ instance.get_status_display }}</dd>
+  <dt>Hạn xử lý bước này</dt><dd>{{ task.due_at|date:"d/m/Y H:i"|default:"Không đặt hạn" }}</dd>
+</dl>
+
+{% if opinions %}
+<h2>Ý kiến tham vấn</h2>
+<ul class="opinions">
+  {% for item in opinions %}<li><strong>{{ item.org_unit.name|default:"Toàn công ty" }}</strong>: {{ item.comment }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<h2>Chứng từ đính kèm</h2>
+{% include "workflow/_documents.html" %}
+
+{% if task.status == "PENDING" %}
+<h2>Xử lý bước này</h2>
+{% if on_behalf_of %}
+<p class="hint">Bạn xử lý thay <strong>{{ on_behalf_of.get_full_name|default:on_behalf_of.username }}</strong> theo uỷ quyền còn hiệu lực.</p>
+{% endif %}
+<form method="post" action="{% url 'task_act' task.pk %}">
+  {% csrf_token %}
+  {% if on_behalf_of %}<input type="hidden" name="on_behalf_of" value="{{ on_behalf_of.pk }}">{% endif %}
+  <p>
+    <label for="decision">Quyết định</label>
+    <select id="decision" name="decision">
+      {% for value, text in decisions %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="comment">Ý kiến</label>
+    <textarea id="comment" name="comment" rows="3" cols="70"></textarea>
+  </p>
+  <p><button type="submit">Ghi nhận</button></p>
+</form>
+{% else %}
+<p class="hint">Bước này đã được xử lý ({{ task.get_status_display }}).</p>
+{% endif %}
+
+{% include "workflow/_history.html" %}
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+{% if intro %}<p class="intro">{{ intro }}</p>{% endif %}
+<div class="toolbar">
+  <form method="get" class="filters" role="search">
+    {% if spec.search_fields %}
+    <p><label for="q">Tìm kiếm</label> <input id="q" type="search" name="q" value="{{ table.q }}"></p>
+    {% endif %}
+    {% for f in filter_fields %}
+    <p><label for="f-{{ f.name }}">{{ f.label }}</label>
+      {% if f.options %}
+      <select id="f-{{ f.name }}" name="{{ f.name }}">
+        <option value="">— Tất cả —</option>
+        {% for value, text in f.options %}<option value="{{ value }}"{% if f.value == value %} selected{% endif %}>{{ text }}</option>{% endfor %}
+      </select>
+      {% else %}
+      <input id="f-{{ f.name }}" type="text" name="{{ f.name }}" value="{{ f.value }}">
+      {% endif %}
+    </p>
+    {% endfor %}
+    <p><button type="submit">Lọc</button> <a class="button-link" href="?">Bỏ lọc</a></p>
+  </form>
+  <p class="actions">
+    {% for action in actions %}<a class="button-link" href="{{ action.url }}">{{ action.label }}</a> {% endfor %}
+    {% if export_url %}<a class="button-link" href="{{ export_url }}{% qs_with page=None %}">Xuất Excel</a>{% endif %}
+  </p>
+</div>
+{% include "ui/table.html" %}
+{% endblock %}

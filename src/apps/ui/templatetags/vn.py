@@ -21,10 +21,15 @@ def bang_chu(value):
 
 @register.simple_tag
 def cell(row, column):
-    """Giá trị ô của bảng: theo khoá cột (cho phép `a__b`), tiền định dạng VND."""
+    """Giá trị ô của bảng: theo khoá cột (cho phép `a__b`), tiền định dạng VND.
+
+    Khoá trỏ tới phương thức không tham số (ví dụ `get_kind_display`) thì gọi để lấy nhãn.
+    """
     obj = row
     for part in column.key.split("__"):
         obj = getattr(obj, part, None)
+        if callable(obj):
+            obj = obj()
         if obj is None:
             break
     if obj is None:

@@ -28,6 +28,7 @@ class TableSpec:
     group_by: str | None = None
     page_size: int = 50
     selectable: bool = False
+    row_url: str | None = None  # tên route chi tiết (nhận pk): ô cột đầu thành liên kết
 
 
 @dataclass

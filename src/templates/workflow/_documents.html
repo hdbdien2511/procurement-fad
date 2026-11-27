@@ -1,0 +1,18 @@
+{% load vn %}
+<table class="data-table">
+  <caption class="visually-hidden">Chứng từ đính kèm</caption>
+  <thead><tr><th scope="col">Tên tệp</th><th scope="col">Loại</th><th scope="col">Người tải lên</th><th scope="col">Thời điểm</th><th scope="col">Thao tác</th></tr></thead>
+  <tbody>
+    {% for doc in documents %}
+    <tr>
+      <td>{{ doc.original_name }}</td>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_by.get_full_name|default:doc.uploaded_by.username }}</td>
+      <td>{{ doc.uploaded_at|date:"d/m/Y H:i" }}</td>
+      <td><a href="{% url 'document_view' doc.pk %}">Xem</a> · <a href="{% url 'document_download' doc.pk %}">Tải về</a></td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="5">Chưa có chứng từ</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

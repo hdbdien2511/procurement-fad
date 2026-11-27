@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+
+{% if requisition %}
+<h2>Tạo sẵn từ tờ trình {{ requisition }}</h2>
+{% if shortfalls %}
+<ul>{% for line, amount in shortfalls %}<li>{{ line }}: thiếu {{ amount|vnd }} đ</li>{% endfor %}</ul>
+{% else %}
+<p>Tờ trình hiện không thiếu ngân sách.</p>
+{% endif %}
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="tu_to_trinh" value="{{ requisition.pk }}">
+  <p><button type="submit">Tạo đề nghị bổ sung cho các dòng thiếu</button></p>
+</form>
+{% endif %}
+
+<h2>Tạo đề nghị mới</h2>
+<form method="post">
+  {% csrf_token %}
+  <p>
+    <label for="kind">Loại đề nghị</label>
+    <select id="kind" name="kind" required>
+      {% for value, text in kinds %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="to_line">Dòng ngân sách nhận</label>
+    <select id="to_line" name="to_line" required>
+      <option value="">— Chọn dòng —</option>
+      {% for line in lines %}<option value="{{ line.pk }}">{{ line }}</option>{% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="from_line">Dòng ngân sách nguồn (chỉ với điều chuyển)</label>
+    <select id="from_line" name="from_line">
+      <option value="">— Không có —</option>
+      {% for line in lines %}<option value="{{ line.pk }}">{{ line }}</option>{% endfor %}
+    </select>
+  </p>
+  <p><label for="amount_vnd">Số tiền (VND, số nguyên đồng)</label> <input id="amount_vnd" type="text" inputmode="numeric" name="amount_vnd" required></p>
+  <p><label for="start">Kỳ bắt đầu</label> <input id="start" type="date" name="start" required></p>
+  <p><label for="months">Số tháng phân bổ</label> <input id="months" type="number" name="months" min="1" value="1" required></p>
+  <p><label for="reason">Lý do</label> <textarea id="reason" name="reason" rows="3" cols="70" required></textarea></p>
+  <p><button type="submit">Lưu đề nghị nháp</button></p>
+</form>
+{% endblock %}

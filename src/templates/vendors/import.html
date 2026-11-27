@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<p class="intro">Tệp cần có sheet <code>L9_Code</code> với các cột Loại hình, Mã số thuế, Tên nhà cung cấp. Lần tải đầu chỉ kiểm tra (chưa ghi gì); tải lại cùng tệp và tích “Xác nhận nhập” để ghi. Tệp tối đa {{ max_upload_mb }} MB.</p>
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  <p><label for="file">Tệp Excel nhà cung cấp</label> <input id="file" type="file" name="file" accept=".xlsx" required></p>
+  <p><label><input type="checkbox" name="confirm" value="1"> Xác nhận nhập vào hệ thống</label></p>
+  <p><button type="submit">Tải lên</button></p>
+</form>
+{% include "ui/_import_report.html" %}
+<p><a href="{% url 'vendor_list' %}">Quay lại danh sách nhà cung cấp</a></p>
+{% endblock %}

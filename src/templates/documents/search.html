@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<form method="get" role="search">
+  <p>
+    <label for="q">Từ khoá (không phân biệt dấu)</label>
+    <input id="q" type="search" name="q" value="{{ q }}">
+    <button type="submit">Tìm</button>
+  </p>
+</form>
+
+{% if q %}
+<h2>Chứng từ ({{ documents|length }})</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Chứng từ khớp từ khoá</caption>
+  <thead><tr><th scope="col">Tên tệp</th><th scope="col">Loại</th><th scope="col">Thời điểm</th><th scope="col">Thao tác</th></tr></thead>
+  <tbody>
+    {% for doc in documents %}
+    <tr>
+      <td>{{ doc.original_name }}</td>
+      <td>{{ doc.get_doc_type_display }}</td>
+      <td>{{ doc.uploaded_at|date:"d/m/Y H:i" }}</td>
+      <td><a href="{% url 'document_view' doc.pk %}">Xem</a> · <a href="{% url 'document_download' doc.pk %}">Tải về</a></td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="4">Không có chứng từ phù hợp</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Tờ trình ({{ requisitions|length }})</h2>
+<ul>
+  {% for item in requisitions %}<li><a href="{% url 'requisition_detail' item.pk %}">{{ item }}</a> — {{ item.title }}</li>
+  {% empty %}<li>Không có tờ trình phù hợp.</li>{% endfor %}
+</ul>
+
+<h2>Đề nghị ngân sách ({{ budget_changes|length }})</h2>
+<ul>
+  {% for item in budget_changes %}<li><a href="{% url 'budget_change_detail' item.pk %}">{{ item }}</a> — {{ item.reason|truncatechars:80 }}</li>
+  {% empty %}<li>Không có đề nghị phù hợp.</li>{% endfor %}
+</ul>
+{% endif %}
+{% endblock %}
