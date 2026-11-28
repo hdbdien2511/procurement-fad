@@ -1,0 +1,18 @@
+{% extends "accounts/_base.html" %}
+{% block title %}Cài đặt email{% endblock %}
+{% block content %}
+<h1>Cài đặt email (SMTP)</h1>
+{% if messages %}
+<ul>{% for m in messages %}<li>{{ m }}</li>{% endfor %}</ul>
+{% endif %}
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  {% if has_password %}<p>Đã lưu mật khẩu (không hiển thị lại).</p>{% endif %}
+  <button type="submit">Lưu</button>
+</form>
+<form method="post" action="{% url 'email_send_test' %}">
+  {% csrf_token %}
+  <button type="submit">Gửi thử</button>
+</form>
+{% endblock %}

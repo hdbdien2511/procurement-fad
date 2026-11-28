@@ -1,0 +1,50 @@
+{% load static %}<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Trang chủ{% endblock %} · Mua sắm HSC</title>
+<link rel="stylesheet" href="{% static 'css/app.css' %}">
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link" href="#main">Bỏ qua, đến nội dung chính</a>
+<header class="app-header" role="banner">
+  <a class="app-name" href="{% url 'home' %}">Mua sắm HSC</a>
+  <nav class="header-actions" aria-label="Tài khoản">
+    {% if request.user.is_authenticated %}
+      <a class="inbox-link" href="{% url 'home' %}">Việc chờ tôi{% if unread_notification_count %} <span class="badge" aria-label="{{ unread_notification_count }} thông báo chưa đọc">{{ unread_notification_count }}</span>{% endif %}</a>
+      <span class="user-name">{{ request.user.get_full_name|default:request.user.username }}</span>
+      <form method="post" action="{% url 'logout' %}" class="logout-form">{% csrf_token %}<button type="submit" class="link-button">Đăng xuất</button></form>
+    {% endif %}
+  </nav>
+</header>
+<div class="app-body">
+  {% if request.user.is_authenticated %}
+  <nav class="side-nav" aria-label="Điều hướng chính">
+    <ul>
+      <li><a href="{% url 'home' %}"{% if request.resolver_match.url_name == 'home' %} aria-current="page"{% endif %}>Việc chờ tôi</a></li>
+      <li><a href="{% url 'requisition_list' %}">Tờ trình mua sắm</a></li>
+      <li><a href="{% url 'budget_list' %}">Ngân sách</a></li>
+      <li><a href="{% url 'budget_change_list' %}">Đề nghị ngân sách</a></li>
+      <li><a href="{% url 'vendor_list' %}">Nhà cung cấp</a></li>
+      <li><a href="{% url 'search' %}">Tìm kiếm</a></li>
+      <li><a href="{% url 'delegations' %}">Uỷ quyền</a></li>
+      <li><a href="{% url 'audit_list' %}">Nhật ký</a></li>
+      <li><a href="{% url 'settings_page' %}">Cài đặt</a></li>
+    </ul>
+  </nav>
+  {% endif %}
+  <main id="main" tabindex="-1">
+    {% if messages %}
+    <ul class="messages" role="status">
+      {% for message in messages %}<li class="message {{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<footer class="app-footer" role="contentinfo">Hệ thống mua sắm HSC · Dữ liệu nội bộ, không sao chép ra ngoài</footer>
+<script src="{% static 'js/app.js' %}" defer></script>
+</body>
+</html>

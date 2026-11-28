@@ -1,0 +1,26 @@
+[project]
+name = "procurement"
+version = "0.1.0"
+description = "Hệ thống quản lý mua sắm HSC"
+requires-python = ">=3.12"
+dependencies = [
+  "Django>=5.2,<5.3",
+  "psycopg[binary]",
+  "django-htmx",
+  "django-otp",
+  "django-axes",
+  "django-csp>=4",
+  "mozilla-django-oidc",
+  "openpyxl",
+  "pypdf",
+  "cryptography",
+  "gunicorn",
+  "dj-database-url",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-django", "factory-boy", "freezegun", "pip-audit", "bandit", "reportlab"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = []

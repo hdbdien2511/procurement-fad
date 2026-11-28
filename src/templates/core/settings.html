@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<nav class="tabs" aria-label="Nhóm cài đặt">
+  <ul>
+    <li><a href="#tham-so">Tham số nghiệp vụ</a></li>
+    <li><a href="#ty-gia">Tỷ giá</a></li>
+    <li><a href="{% url 'email_settings' %}">Email (SMTP)</a></li>
+    <li><a href="/quan-tri/">Chính sách duyệt (quản trị)</a></li>
+  </ul>
+</nav>
+
+<h2 id="tham-so">Tham số nghiệp vụ</h2>
+<form method="post" action="{% url 'settings_params' %}">
+  {% csrf_token %}
+  {% for param in params %}
+  <p>
+    <label for="p-{{ param.key }}">{{ param.label }}</label>
+    {% if param.kind == "choice" %}
+    <select id="p-{{ param.key }}" name="{{ param.key }}">
+      {% for value, text in param.options %}<option value="{{ value }}"{% if param.value == value %} selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <input id="p-{{ param.key }}" type="text" inputmode="numeric" name="{{ param.key }}" value="{{ param.value }}">
+    {% endif %}
+  </p>
+  {% endfor %}
+  <p><button type="submit">Lưu tham số</button></p>
+</form>
+
+<h2 id="ty-gia">Tỷ giá</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Tỷ giá đã khai báo</caption>
+  <thead><tr><th scope="col">Ngoại tệ</th><th scope="col">Ngày hiệu lực</th><th scope="col" class="num">Tỷ giá</th></tr></thead>
+  <tbody>
+    {% for rate in rates %}
+    <tr><td>{{ rate.currency }}</td><td>{{ rate.date|date:"d/m/Y" }}</td><td class="num">{{ rate.rate }}</td></tr>
+    {% empty %}
+    <tr><td class="empty" colspan="3">Chưa khai báo tỷ giá</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="{% url 'settings_rate_add' %}">
+  {% csrf_token %}
+  <p><label for="currency">Ngoại tệ (3 chữ cái)</label> <input id="currency" type="text" name="currency" maxlength="3" required></p>
+  <p><label for="date">Ngày hiệu lực</label> <input id="date" type="date" name="date" value="{{ today|date:'Y-m-d' }}" required></p>
+  <p><label for="rate">Tỷ giá (VND)</label> <input id="rate" type="text" inputmode="decimal" name="rate" required></p>
+  <p><button type="submit">Lưu tỷ giá</button></p>
+</form>
+{% endblock %}

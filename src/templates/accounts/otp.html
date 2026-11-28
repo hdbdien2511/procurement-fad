@@ -1,0 +1,12 @@
+{% extends "accounts/_base.html" %}
+{% block title %}Xác thực hai lớp{% endblock %}
+{% block content %}
+<h1>Xác thực hai lớp</h1>
+<p>Nhập mã 6 chữ số từ ứng dụng xác thực.</p>
+<form method="post">
+  {% csrf_token %}
+  {{ form.as_p }}
+  <input type="hidden" name="next" value="{{ next }}">
+  <button type="submit">Xác nhận</button>
+</form>
+{% endblock %}

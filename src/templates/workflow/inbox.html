@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}Việc chờ tôi{% endblock %}
+{% block content %}
+<h1>Việc chờ tôi</h1>
+<p class="intro">Các bước đang chờ bạn xử lý, kể cả bước bạn được duyệt thay theo uỷ quyền.</p>
+<form method="post" action="{% url 'task_bulk_act' %}">
+  {% csrf_token %}
+  {% include "ui/table.html" %}
+  <fieldset class="bulk-bar">
+    <legend>Xử lý hàng loạt các hồ sơ đã chọn</legend>
+    <p>
+      <label for="decision">Quyết định</label>
+      <select id="decision" name="decision">
+        {% for value, text in decisions %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="comment">Ý kiến (bắt buộc khi từ chối hoặc trả lại)</label>
+      <textarea id="comment" name="comment" rows="2" cols="60"></textarea>
+    </p>
+    <p><button type="submit">Xử lý các hồ sơ đã chọn</button></p>
+  </fieldset>
+</form>
+{% endblock %}

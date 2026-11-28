@@ -1,0 +1,421 @@
+"""Bộ máy luồng duyệt: chọn quy tắc, khởi tạo hồ sơ, xử lý bước (spec 7.1).
+
+Quy tắc thứ tự trong transaction (tránh deadlock): `audit.record()` giữ advisory lock toàn cục, nên
+KHÔNG được lấy khoá dòng nào sau khi đã gọi nó trong cùng transaction. Vì vậy `start()` và `act()`
+luôn đi theo thứ tự:
+
+1. `select_for_update` instance rồi task (luôn instance trước task);
+2. kiểm tra hợp lệ;
+3. cập nhật trạng thái task, mở seq kế;
+4. chèn thông báo/email (chỉ INSERT, không khoá dòng) cho các bước vừa mở còn chờ xử lý và, nếu
+   hồ sơ kết thúc, kết quả cho người nộp;
+5. nếu hồ sơ kết thúc → gọi `subject.on_workflow_finished(status)` (callback có thể khoá dòng
+   ngân sách và tự ghi audit của nó ở cuối);
+6. SAU CÙNG mới ghi các bản audit `workflow.*` đã gom lại.
+
+Sau khi khởi tạo, engine chỉ đi theo `instance.snapshot` và các task đã sinh, không đọc lại
+chính sách live.
+"""
+
+from datetime import timedelta
+from decimal import Decimal
+
+from django.contrib.contenttypes.models import ContentType
+from django.db import transaction
+from django.utils import timezone
+
+from apps.audit import service as audit
+from apps.core.services import get_setting
+from apps.documents.models import DOC_TYPES, MEETING_MINUTES, Document
+
+from . import delegation, notices, resolver
+from .exceptions import (  # noqa: F401  (re-export: engine.NotAllowed, ...)
+    AlreadyProcessed,
+    Misconfigured,
+    NoApprover,
+    NoMatchingRule,
+    NoPolicy,
+    NotAllowed,
+    WorkflowError,
+)
+from .models import (
+    APPROVE,
+    APPROVED,
+    BUDGET_CHANGE,
+    CANCELLED,
+    COMMENTED,
+    MEETING,
+    PENDING,
+    PROPOSE,
+    REJECTED,
+    RETURNED,
+    RUNNING,
+    SKIPPED,
+    WAITING,
+    ApprovalPolicy,
+    PolicyRule,
+    WorkflowInstance,
+    WorkflowTask,
+)
+
+DECISIONS = ("APPROVE", "REJECT", "RETURN", "COMMENT")
+_FINAL_STATUS = {"APPROVE": APPROVED, "REJECT": REJECTED, "RETURN": RETURNED, "COMMENT": COMMENTED}
+_DONE = (APPROVED, SKIPPED)
+
+PROPOSE_SKIP_COMMENT = "Người lập có vai trò đề xuất"
+ADVISORY_EXPIRED_COMMENT = "Hết lượt góp ý"
+
+
+# --- chọn chính sách / quy tắc ----------------------------------------------------------------------
+
+def active_policy(subject_kind: str) -> ApprovalPolicy:
+    policy = (
+        ApprovalPolicy.objects.filter(
+            subject_kind=subject_kind, is_active=True, effective_from__lte=timezone.localdate()
+        )
+        .order_by("-effective_from", "-version")
+        .first()
+    )
+    if policy is None:
+        raise NoPolicy("Chưa có chính sách duyệt hiệu lực cho loại hồ sơ này")
+    return policy
+
+
+def select_rule(policy, ctx: dict, cumulative_after: Decimal | None) -> PolicyRule:
+    """Rule đầu tiên (theo `priority` tăng dần) thoả cả ba điều kiện.
+
+    Khi `cumulative_after` là None (hồ sơ không tính luỹ kế) các hạn mức luỹ kế không áp dụng.
+    """
+    amount = Decimal(ctx["amount_vnd"])
+    fixed_cost = None
+    for rule in policy.rules.order_by("priority", "pk"):
+        if rule.max_amount is not None and amount > rule.max_amount:
+            continue
+        if cumulative_after is not None:
+            if rule.cumulative_cap is not None and not cumulative_after < rule.cumulative_cap:
+                continue
+            if rule.cumulative_cap_pct is not None:
+                if fixed_cost is None:
+                    fixed_cost = Decimal(str(get_setting("annual_fixed_cost_vnd") or 0))
+                if not cumulative_after < rule.cumulative_cap_pct * fixed_cost / 100:
+                    continue
+        return rule
+    raise NoMatchingRule("Không có quy tắc duyệt phù hợp với hồ sơ")
+
+
+# --- snapshot -------------------------------------------------------------------------------------
+
+def _dec(value):
+    return None if value is None else str(value)
+
+
+def _normalize_context(raw: dict) -> dict:
+    return {
+        "amount_vnd": Decimal(raw["amount_vnd"]),
+        "budget_unit_ids": [int(i) for i in raw.get("budget_unit_ids") or []],
+        "consult_unit_ids": [int(i) for i in raw.get("consult_unit_ids") or []],
+        "requester_unit_id": raw.get("requester_unit_id"),
+        "created_by_id": raw.get("created_by_id"),
+        "requester_id": raw.get("requester_id"),
+        "extra_barred_ids": [int(i) for i in raw.get("extra_barred_ids") or []],
+    }
+
+
+def _snapshot(policy, rule, ctx, cumulative_after) -> dict:
+    return {
+        "policy": {"code": policy.code, "version": policy.version},
+        "rule": {
+            "id": rule.pk,
+            "label": rule.label,
+            "max_amount": _dec(rule.max_amount),
+            "cumulative_cap": _dec(rule.cumulative_cap),
+            "cumulative_cap_pct": _dec(rule.cumulative_cap_pct),
+        },
+        "steps": [
+            {
+                "seq": s.seq,
+                "kind": s.kind,
+                "role_code": s.role_code,
+                "scope": s.scope,
+                "fixed_org_unit_id": s.fixed_org_unit_id,
+                "mandatory": s.mandatory,
+                "sla_hours": s.sla_hours,
+                "escalate_role_code": s.escalate_role_code,
+                "requires_doc_type": s.requires_doc_type,
+            }
+            for s in rule.steps.order_by("seq", "pk")
+        ],
+        "context": {**ctx, "amount_vnd": _dec(ctx["amount_vnd"]), "cumulative_after_vnd": _dec(cumulative_after)},
+        "skipped_steps": [],
+    }
+
+
+# --- người xử lý ----------------------------------------------------------------------------------
+
+def candidates(task):
+    """Người được xử lý bước (vai trò + phạm vi, trừ người nộp/tạo), tính tại thời điểm gọi."""
+    return resolver.candidates(task)
+
+
+def _resolve_actor(task, user, on_behalf_of):
+    """Trả `(người có thẩm quyền, uỷ quyền | None)` mà `user` dùng để xử lý `task`.
+
+    - Không chỉ định `on_behalf_of`: người xử lý trực tiếp được ưu tiên; nếu không phải, tự tìm uỷ
+      quyền hợp lệ (người uỷ quyền có pk nhỏ nhất).
+    - Có chỉ định: phải có uỷ quyền hợp lệ từ đúng người đó.
+    Cả người nhận lẫn người uỷ quyền đều bị kiểm tra phân tách nhiệm vụ (xem `delegation`).
+    """
+    if on_behalf_of is None:
+        if candidates(task).filter(pk=user.pk).exists():
+            return user, None
+        found = delegation.find_delegation(user, task, lock=True)
+        if found is None:
+            raise NotAllowed("Bạn không có quyền xử lý bước này")
+    else:
+        found = delegation.find_delegation(user, task, delegator=on_behalf_of, lock=True)
+        if found is None:
+            raise NotAllowed("Không có uỷ quyền hợp lệ để xử lý thay người này")
+    return found.delegator, found
+
+
+# --- tiến trình -----------------------------------------------------------------------------------
+
+class _Run:
+    """Gom các thay đổi và bản audit trong một lần `start`/`act` để ghi audit sau cùng."""
+
+    def __init__(self, instance, actor, now, subject):
+        self.instance = instance
+        self.actor = actor
+        self.now = now
+        self.subject = subject
+        self.events: list[tuple[str, dict]] = []
+        self.opened: list[int] = []
+        self.notified = False
+
+    def event(self, action, **changes):
+        self.events.append((action, {"instance": self.instance.pk, **changes}))
+
+
+def _skip(task, comment, now):
+    task.status = SKIPPED
+    task.comment = comment
+    task.acted_at = now
+    task.save(update_fields=["status", "comment", "acted_at"])
+
+
+def _open(task, run):
+    sla_hours = run.instance.snapshot["steps"][task.step_index].get("sla_hours")
+    task.status = PENDING
+    task.opened_at = run.now
+    task.due_at = run.now + timedelta(hours=sla_hours) if sla_hours else None
+    task.save(update_fields=["status", "opened_at", "due_at"])
+    run.opened.append(task.pk)
+    if task.kind == PROPOSE and resolver.role_holders(task).filter(pk=run.instance.submitted_by_id).exists():
+        _skip(task, PROPOSE_SKIP_COMMENT, run.now)
+        run.event("workflow.task_skipped", task=task.pk, seq=task.seq, kind=task.kind, reason=PROPOSE_SKIP_COMMENT)
+
+
+def _advance(run) -> bool:
+    """Mở các seq đến "cổng" (seq đầu tiên còn task bắt buộc chưa xong); trả True nếu đã hết bước.
+
+    Seq chỉ có task tham vấn (không bắt buộc) mở cùng lúc với seq kế. Task tham vấn còn chờ của một
+    seq bị bỏ qua ("Hết lượt góp ý") khi seq bắt buộc đầu tiên tính từ seq đó đã hoàn tất.
+    """
+    while True:
+        tasks = list(run.instance.tasks.order_by("seq", "pk"))
+        unfinished = [t.seq for t in tasks if t.mandatory and t.status not in _DONE]
+        gate = min(unfinished) if unfinished else None
+        to_open = [t for t in tasks if t.status == WAITING and (gate is None or t.seq <= gate)]
+        if gate is not None and to_open:
+            for t in to_open:
+                _open(t, run)
+            continue  # PROPOSE có thể vừa bị bỏ qua → cổng thay đổi
+        mandatory_seqs = sorted({t.seq for t in tasks if t.mandatory})
+        for t in tasks:
+            if t.mandatory or t.status not in (PENDING, WAITING):
+                continue
+            closing = next((s for s in mandatory_seqs if s >= t.seq), None)
+            if gate is None or (closing is not None and closing < gate):
+                _skip(t, ADVISORY_EXPIRED_COMMENT, run.now)
+                run.event("workflow.task_skipped", task=t.pk, seq=t.seq, kind=t.kind,
+                          reason=ADVISORY_EXPIRED_COMMENT)
+        return gate is None
+
+
+def _send_notifications(run):
+    """Thông báo cho các bước mở trong lần chạy này còn đang chờ; kết quả cho người nộp nếu đã xong.
+
+    Chỉ INSERT (thông báo + outbox) nên đặt TRƯỚC callback kết thúc và các bản audit cuối.
+    """
+    if run.notified:
+        return
+    run.notified = True
+    for task in run.instance.tasks.filter(pk__in=run.opened, status=PENDING).order_by("seq", "pk"):
+        task.instance = run.instance
+        notices.notify_opened(task, run.subject)
+    if run.instance.status != RUNNING:
+        notices.notify_result(run.instance, run.subject)
+
+
+def _finish(run, status, subject):
+    instance = run.instance
+    skipped = []
+    for t in instance.tasks.filter(status__in=(PENDING, WAITING)):
+        _skip(t, "", run.now)
+        skipped.append(t.pk)
+    instance.status = status
+    instance.finished_at = run.now
+    instance.save(update_fields=["status", "finished_at"])
+    _send_notifications(run)
+    subject.on_workflow_finished(status)
+    run.event(f"workflow.{status.lower()}", status=status, skipped_tasks=skipped)
+
+
+def _flush_audit(run, subject):
+    for action, changes in run.events:
+        audit.record(action, subject, actor=run.actor, changes=changes)
+
+
+# --- API ------------------------------------------------------------------------------------------
+
+@transaction.atomic
+def start(subject, subject_kind: str, submitted_by) -> WorkflowInstance:
+    policy = active_policy(subject_kind)
+    ctx = _normalize_context(subject.workflow_context())
+    cumulative_after = None
+    if subject_kind == BUDGET_CHANGE:
+        cumulative_after = Decimal(subject.cumulative_amount_vnd(get_setting("cumulative_scope")))
+    rule = select_rule(policy, ctx, cumulative_after)
+    snapshot = _snapshot(policy, rule, ctx, cumulative_after)
+    now = timezone.now()
+
+    instance = WorkflowInstance.objects.create(
+        content_type=ContentType.objects.get_for_model(subject), object_id=str(subject.pk),
+        policy=policy, rule=rule, snapshot=snapshot, submitted_by=submitted_by, started_at=now,
+    )
+    tasks = []
+    for index, step in enumerate(snapshot["steps"]):
+        branches = resolver.expand_step(step, snapshot["context"])
+        if not branches:
+            snapshot["skipped_steps"].append(
+                {"seq": step["seq"], "kind": step["kind"], "reason": "Không có đơn vị áp dụng"}
+            )
+        for branch_key, org_unit_id in branches:
+            tasks.append(WorkflowTask(
+                instance=instance, seq=step["seq"], step_index=index, branch_key=branch_key,
+                kind=step["kind"], role_code=step["role_code"], org_unit_id=org_unit_id,
+                mandatory=step["mandatory"], status=WAITING,
+            ))
+    WorkflowTask.objects.bulk_create(tasks)
+    if snapshot["skipped_steps"]:
+        instance.save(update_fields=["snapshot"])
+
+    run = _Run(instance, submitted_by, now, subject)
+    run.event("workflow.started", policy=policy.code, version=policy.version, rule=rule.label,
+              amount_vnd=snapshot["context"]["amount_vnd"])
+    if _advance(run):
+        # không tự duyệt: mọi hồ sơ phải có ít nhất một bước bắt buộc do người xử lý
+        raise NoApprover("Chính sách không còn bước duyệt bắt buộc nào — kiểm tra cấu hình")
+    _send_notifications(run)
+    _flush_audit(run, subject)
+    return instance
+
+
+def _check_required_document(instance, task):
+    step = instance.snapshot["steps"][task.step_index]
+    doc_type = step.get("requires_doc_type") or (MEETING_MINUTES if task.kind == MEETING else None)
+    if doc_type is None:
+        return
+    exists = Document.objects.filter(
+        content_type_id=instance.content_type_id, object_id=instance.object_id, doc_type=doc_type,
+        uploaded_at__gte=instance.started_at,
+    ).exists()
+    if not exists:
+        label = dict(DOC_TYPES).get(doc_type, doc_type)
+        raise NotAllowed(f"Cần đính kèm {label[0].lower()}{label[1:]}")
+
+
+def _validate_decision(instance, task, decision, comment):
+    if decision not in DECISIONS:
+        raise NotAllowed("Thao tác không hợp lệ")
+    if not task.mandatory:
+        if decision != "COMMENT":
+            raise NotAllowed("Bước tham vấn chỉ nhận ý kiến")
+        if not comment:
+            raise NotAllowed("Vui lòng nhập ý kiến")
+        return
+    if decision == "COMMENT":
+        raise NotAllowed("Bước bắt buộc cần chấp thuận, từ chối hoặc trả lại")
+    if decision in ("REJECT", "RETURN") and not comment:
+        raise NotAllowed("Vui lòng nhập lý do")
+    if decision == APPROVE:
+        _check_required_document(instance, task)
+
+
+@transaction.atomic
+def act(task, user, decision: str, comment: str = "", *, on_behalf_of=None) -> WorkflowTask:
+    instance = WorkflowInstance.objects.select_for_update().get(pk=task.instance_id)
+    task = WorkflowTask.objects.select_for_update().get(pk=task.pk)
+    task.instance = instance
+    if instance.status != RUNNING or task.status not in (PENDING, WAITING):
+        raise AlreadyProcessed("Bước này đã được xử lý")
+    if task.status == WAITING:
+        raise NotAllowed("Bước này chưa đến lượt xử lý")
+
+    if user.pk in resolver.barred_user_ids(instance):
+        raise NotAllowed("Không được duyệt hồ sơ do chính mình lập")
+    if user.pk in resolver.sys_admin_ids():
+        raise NotAllowed("Quản trị hệ thống không được duyệt nghiệp vụ")
+    principal, used = _resolve_actor(task, user, on_behalf_of)
+    comment = (comment or "").strip()
+    _validate_decision(instance, task, decision, comment)
+
+    now = timezone.now()
+    task.status = _FINAL_STATUS[decision]
+    task.acted_by = user
+    task.on_behalf_of = principal if used else None
+    task.comment = comment
+    task.acted_at = now
+    task.save(update_fields=["status", "acted_by", "on_behalf_of", "comment", "acted_at"])
+
+    subject = instance.subject
+    run = _Run(instance, user, now, subject)
+    extra = {}
+    if used:
+        extra = {
+            "on_behalf_of": principal.get_username(),
+            "delegation_id": used.pk,
+            "note": f"{user.get_username()} duyệt thay {principal.get_username()} theo uỷ quyền số {used.pk}",
+        }
+    run.event("workflow.task_acted", task=task.pk, seq=task.seq, kind=task.kind,
+              decision=decision, comment=comment, **extra)
+    if decision in ("REJECT", "RETURN"):
+        _finish(run, task.status, subject)
+    elif decision == APPROVE and _advance(run):
+        _finish(run, APPROVED, subject)
+    _send_notifications(run)
+    _flush_audit(run, subject)
+    return task
+
+
+@transaction.atomic
+def cancel(instance, user, reason: str) -> WorkflowInstance:
+    """Huỷ hồ sơ đang duyệt theo yêu cầu của hồ sơ nguồn (ví dụ người lập huỷ tờ trình).
+
+    Các bước còn chờ chuyển "Bỏ qua" kèm lý do; không gọi `on_workflow_finished` (người gọi tự cập
+    nhật hồ sơ nguồn) và không gửi thông báo. Khoá instance rồi task như `act`; audit ghi sau cùng.
+    """
+    instance = WorkflowInstance.objects.select_for_update().get(pk=instance.pk)
+    if instance.status != RUNNING:
+        raise AlreadyProcessed("Luồng duyệt đã kết thúc")
+    now = timezone.now()
+    skipped = []
+    for task in instance.tasks.select_for_update().filter(status__in=(PENDING, WAITING)).order_by("pk"):
+        _skip(task, reason, now)
+        skipped.append(task.pk)
+    instance.status = CANCELLED
+    instance.finished_at = now
+    instance.save(update_fields=["status", "finished_at"])
+    audit.record("workflow.cancelled", instance.subject, actor=user,
+                 changes={"instance": instance.pk, "reason": reason, "skipped_tasks": skipped})
+    return instance

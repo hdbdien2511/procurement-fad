@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}Tiền kiểm · {{ req }}{% endblock %}
+{% block content %}
+<h1>FAD tiền kiểm · {{ req }}</h1>
+<dl class="facts">
+  <dt>Tiêu đề</dt><dd>{{ req.title }}</dd>
+  <dt>Đơn vị đề nghị</dt><dd>{{ req.requester_unit.name|default:"—" }}</dd>
+  <dt>Tổng tiền (VND)</dt><dd class="num">{{ req.total_vnd|vnd }} đ</dd>
+  <dt>Bằng chữ</dt><dd>{{ req.total_vnd|bang_chu }}</dd>
+  <dt>Trạng thái</dt><dd>{{ req.get_status_display }}</dd>
+</dl>
+
+<h2>Số dư từng dòng ngân sách</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Số dư ngân sách của từng dòng được phân bổ</caption>
+  <thead><tr><th scope="col">Dòng ngân sách</th><th scope="col" class="num">Phân bổ</th><th scope="col" class="num">Ngân sách</th><th scope="col" class="num">Đã giữ chỗ</th><th scope="col" class="num">Đã ghi nhận</th><th scope="col" class="num">Khả dụng</th></tr></thead>
+  <tbody>
+    {% for row in fundings %}
+    <tr>
+      <td>{{ row.funding.budget_line }}</td>
+      <td class="num">{{ row.funding.amount_vnd|vnd }}</td>
+      <td class="num">{{ row.balance.budget|vnd }}</td>
+      <td class="num">{{ row.balance.reserved|vnd }}</td>
+      <td class="num">{{ row.balance.expensed|vnd }}</td>
+      <td class="num">{{ row.balance.available|vnd }}</td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="6">Chưa phân bổ ngân sách</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Quy tắc thẩm quyền đã chọn</h2>
+<p>{{ rule.label|default:"(chưa khởi tạo luồng duyệt)" }}{% if rule.max_amount %} · hạn mức {{ rule.max_amount|vnd }} đ{% endif %}
+  {% if instance %}· chính sách {{ instance.policy }}{% endif %}</p>
+<table class="data-table">
+  <caption class="visually-hidden">Các bước duyệt theo ảnh chụp chính sách</caption>
+  <thead><tr><th scope="col">Bước</th><th scope="col">Loại</th><th scope="col">Vai trò</th><th scope="col">Phạm vi</th><th scope="col">Bắt buộc</th><th scope="col">Thời hạn (giờ)</th><th scope="col">Chứng từ bắt buộc</th></tr></thead>
+  <tbody>
+    {% for step in snapshot_steps %}
+    <tr>
+      <td>{{ step.seq }}</td><td>{{ step.kind }}</td><td>{{ step.role_code }}</td><td>{{ step.scope }}</td>
+      <td>{% if step.mandatory %}Có{% else %}Không{% endif %}</td>
+      <td class="num">{{ step.sla_hours }}</td>
+      <td>{{ step.requires_doc_type|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="7">Chưa có ảnh chụp chính sách</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% for warning in split_warnings %}<p class="message warning">{{ warning }}</p>{% endfor %}
+
+<h2>Ý kiến tham vấn</h2>
+<ul class="opinions">
+  {% for item in opinions %}<li><strong>{{ item.org_unit.name|default:"Toàn công ty" }}</strong>: {{ item.comment }}</li>
+  {% empty %}<li>Chưa có ý kiến tham vấn.</li>{% endfor %}
+</ul>
+
+<h2>Checklist chứng từ</h2>
+<ul class="checklist">
+  {% for item in checklist %}
+  <li>{{ item.label }}: {% if item.count %}{{ item.count }} bản{% else %}chưa có{% endif %}</li>
+  {% endfor %}
+</ul>
+{% include "workflow/_documents.html" %}
+
+<h2>Kết quả tiền kiểm</h2>
+{% if task %}
+<form method="post" action="{% url 'requisition_precheck_act' req.pk %}">
+  {% csrf_token %}
+  <p><label for="comment">Ý kiến tiền kiểm</label> <textarea id="comment" name="comment" rows="4" cols="70"></textarea></p>
+  <p>
+    <button type="submit" name="decision" value="PASS">Đạt</button>
+    <button type="submit" name="decision" value="RETURN">Trả lại bổ sung</button>
+  </p>
+</form>
+{% else %}
+<p class="hint">Tờ trình này không có bước FAD tiền kiểm đang chờ xử lý.</p>
+{% endif %}
+{% endblock %}

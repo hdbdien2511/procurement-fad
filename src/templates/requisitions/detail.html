@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}{{ req }}{% endblock %}
+{% block content %}
+<h1>{{ req }} · {{ req.title }}</h1>
+
+<dl class="facts">
+  <dt>Số tờ trình</dt><dd>{{ req.number|default:"(chưa cấp số)" }} · phiên bản {{ req.version }}</dd>
+  <dt>Trạng thái</dt><dd>{{ req.get_status_display }}</dd>
+  <dt>Loại mua sắm</dt><dd>{{ req.get_procurement_type_display }}</dd>
+  <dt>Người đề nghị</dt><dd>{{ req.requester.get_full_name|default:req.requester.username }} ({{ req.requester_unit.name|default:"chưa có đơn vị" }})</dd>
+  <dt>Nhà cung cấp</dt><dd>{{ req.vendor|default:"(chưa chọn)" }}</dd>
+  <dt>Ngày bắt đầu dịch vụ</dt><dd>{{ req.service_start|date:"d/m/Y" }} · phân bổ {{ req.months }} tháng</dd>
+  <dt>Tổng tiền (nguyên tệ)</dt><dd class="num">{{ req.total_original }} {{ req.currency }}</dd>
+  <dt>Tổng tiền (VND)</dt><dd class="num">{{ req.total_vnd|vnd }} đ</dd>
+  <dt>Bằng chữ</dt><dd>{{ req.total_vnd|bang_chu }}</dd>
+  <dt>Sự cần thiết</dt><dd>{{ req.necessity|default:"—" }}</dd>
+  <dt>Lý do không đủ 03 báo giá</dt><dd>{{ req.quote_exception_reason|default:"—" }}</dd>
+</dl>
+
+{% for warning in split_warnings %}<p class="message warning">{{ warning }}</p>{% endfor %}
+{% if submit_errors %}
+<div class="message error">
+  <p>Chưa nộp được vì:</p>
+  <ul>{% for error in submit_errors %}<li>{{ error }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if budget_check and not budget_check.ok %}
+<div class="message error">
+  <p>Ngân sách khả dụng không đủ:</p>
+  <ul>{% for line, amount in budget_check.shortfalls %}<li>{{ line }}: thiếu {{ amount|vnd }} đ</li>{% endfor %}</ul>
+  <p><a href="{% url 'budget_change_create' %}?tu_to_trinh={{ req.pk }}">Tạo đề nghị bổ sung ngân sách</a></p>
+</div>
+{% endif %}
+{% if budget_check %}{% for warning in budget_check.warnings %}<p class="message warning">{{ warning }}</p>{% endfor %}{% endif %}
+
+<h2>Dòng hàng</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Dòng hàng của tờ trình</caption>
+  <thead><tr><th scope="col">Mô tả</th><th scope="col" class="num">Số lượng</th><th scope="col" class="num">Đơn giá</th><th scope="col" class="num">VAT (%)</th><th scope="col" class="num">Thành tiền</th></tr></thead>
+  <tbody>
+    {% for line in lines %}
+    <tr>
+      <td>{{ line.description }}</td>
+      <td class="num">{{ line.quantity }}</td>
+      <td class="num">{{ line.unit_price }}</td>
+      <td class="num">{{ line.vat_rate }}</td>
+      <td class="num">{{ line.amount }}</td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="5">Chưa có dòng hàng</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Phân bổ ngân sách và số dư khả dụng</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Phân bổ ngân sách của tờ trình kèm số dư từng dòng</caption>
+  <thead><tr><th scope="col">Dòng ngân sách</th><th scope="col" class="num">Phân bổ (VND)</th><th scope="col" class="num">Ngân sách</th><th scope="col" class="num">Đã giữ chỗ</th><th scope="col" class="num">Đã ghi nhận</th><th scope="col" class="num">Khả dụng</th><th scope="col">Sổ cái</th></tr></thead>
+  <tbody>
+    {% for row in fundings %}
+    <tr>
+      <td>{{ row.funding.budget_line }}</td>
+      <td class="num">{{ row.funding.amount_vnd|vnd }}</td>
+      <td class="num">{{ row.balance.budget|vnd }}</td>
+      <td class="num">{{ row.balance.reserved|vnd }}</td>
+      <td class="num">{{ row.balance.expensed|vnd }}</td>
+      <td class="num">{{ row.balance.available|vnd }}</td>
+      <td><a href="{% url 'budget_ledger' row.funding.budget_line_id %}">Xem</a></td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="7">Chưa phân bổ ngân sách</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if opinions %}
+<h2>Ý kiến tham vấn</h2>
+<ul class="opinions">
+  {% for item in opinions %}<li><strong>{{ item.org_unit.name|default:"Toàn công ty" }}</strong>: {{ item.comment }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<h2>Chứng từ</h2>
+{% include "workflow/_documents.html" %}
+{% if can_upload %}
+<form method="post" action="{% url 'requisition_upload' req.pk %}" enctype="multipart/form-data">
+  {% csrf_token %}
+  <p>
+    <label for="doc_type">Loại chứng từ</label>
+    <select id="doc_type" name="doc_type">
+      {% for value, text in doc_types %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+    </select>
+  </p>
+  <p><label for="file">Tệp</label> <input id="file" type="file" name="file" required></p>
+  <p><button type="submit">Tải chứng từ lên</button></p>
+</form>
+{% endif %}
+
+<h2>Thao tác</h2>
+<div class="action-bar">
+  {% if can_submit %}
+  <form method="post" action="{% url 'requisition_submit' req.pk %}">{% csrf_token %}<button type="submit">Nộp tờ trình</button></form>
+  {% endif %}
+  <form method="post" action="{% url 'requisition_copy' req.pk %}">{% csrf_token %}<button type="submit">Sao chép thành tờ trình mới</button></form>
+  {% if can_revise %}
+  <form method="post" action="{% url 'requisition_revise' req.pk %}">{% csrf_token %}<button type="submit">Sửa lại bản mới</button></form>
+  {% endif %}
+  {% if can_retry_reserve %}
+  <form method="post" action="{% url 'requisition_retry_reserve' req.pk %}">{% csrf_token %}<button type="submit">Giữ chỗ lại ngân sách</button></form>
+  {% endif %}
+</div>
+{% if can_cancel %}
+<form method="post" action="{% url 'requisition_cancel' req.pk %}">
+  {% csrf_token %}
+  <p><label for="reason">Lý do huỷ</label> <input id="reason" type="text" name="reason" size="50" required></p>
+  <p><button type="submit">Huỷ tờ trình</button></p>
+</form>
+{% endif %}
+
+{% include "workflow/_history.html" %}
+{% endblock %}

@@ -1,0 +1,27 @@
+{% load vn %}
+{% if report %}
+<h2>Báo cáo làm sạch dữ liệu</h2>
+{% if report.issues %}
+<table class="data-table">
+  <caption class="visually-hidden">Các lỗi cần sửa trong tệp</caption>
+  <thead><tr><th scope="col">Sheet</th><th scope="col">Dòng</th><th scope="col">Cột</th><th scope="col">Lỗi</th></tr></thead>
+  <tbody>
+    {% for issue in report.issues %}
+    <tr><td>{{ issue.sheet|default:"—" }}</td><td class="num">{{ issue.row }}</td><td>{{ issue.column|default:"—" }}</td><td>{{ issue.message }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Không có lỗi dữ liệu.</p>
+{% endif %}
+
+<h3>Số liệu sẽ ghi</h3>
+<ul>
+  {% for key, value in report.created.items %}<li>{{ key }}: {{ value }}</li>{% empty %}<li>Chưa có số liệu tổng hợp.</li>{% endfor %}
+</ul>
+<h3>Tổng tiền theo loại bút toán</h3>
+<ul>
+  {% for key, value in report.totals.items %}<li>{{ key }}: {{ value|vnd }} đ</li>{% empty %}<li>—</li>{% endfor %}
+</ul>
+<p>Số dòng bỏ qua vì khác năm: {{ report.skipped_other_year }}</p>
+{% endif %}

@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: procurement
+          POSTGRES_PASSWORD: procurement
+          POSTGRES_DB: procurement_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U procurement"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://procurement:procurement@localhost:5432/procurement_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.lock
+      - run: pytest
+      # Không được quên migration cho thay đổi model
+      - name: makemigrations --check
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.dev
+        run: python src/manage.py makemigrations --check --dry-run
+      # Cấu hình prod phải vượt kiểm tra triển khai của Django (cookie secure, HSTS, SSL redirect...)
+      - name: manage.py check --deploy
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          ALLOWED_HOSTS: procurement.example.vn
+          SITE_URL: https://procurement.example.vn
+        run: |
+          export SECRET_KEY="$(python -c 'import secrets;print(secrets.token_urlsafe(48))')"
+          export APP_ENCRYPTION_KEY="$(python -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')"
+          python src/manage.py check --deploy --fail-level WARNING
+      - run: pip-audit -r requirements.lock
+      - run: bandit -r src -ll
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

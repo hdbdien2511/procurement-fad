@@ -1,0 +1,4 @@
+htmx.min.js: phiên bản dự kiến htmx 2.0.x (khớp django-htmx trong pyproject.toml).
+Tệp chưa được đóng gói (không tải từ mạng) và base.html hiện KHÔNG nạp nó. Khi IT đóng gói tệp
+vào thư mục này, thêm lại <script src="{% static 'vendor/htmx.min.js' %}" defer></script> vào base.html.
+HTMX chỉ là phần tăng cường; giao diện không phụ thuộc vào nó. Không dùng CDN.

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<form method="post">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <fieldset>
+    <legend>Thông tin chung</legend>
+    {% for field in form %}
+    <p>
+      {{ field.label_tag }} {{ field }}
+      {% if field.help_text %}<span class="hint">{{ field.help_text }}</span>{% endif %}
+      {{ field.errors }}
+    </p>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset>
+    <legend>Dòng hàng</legend>
+    {{ lines.management_form }}
+    {{ lines.non_form_errors }}
+    {% for sub in lines %}
+    <div class="formset-row">
+      {% for field in sub.visible_fields %}<p>{{ field.label_tag }} {{ field }}{{ field.errors }}</p>{% endfor %}
+      {% for field in sub.hidden_fields %}{{ field }}{% endfor %}
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset>
+    <legend>Phân bổ ngân sách</legend>
+    {{ fundings.management_form }}
+    {{ fundings.non_form_errors }}
+    {% for sub in fundings %}
+    <div class="formset-row">
+      {% for field in sub.visible_fields %}<p>{{ field.label_tag }} {{ field }}{{ field.errors }}</p>{% endfor %}
+      {% for field in sub.hidden_fields %}{{ field }}{% endfor %}
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <p><button type="submit">Lưu tờ trình nháp</button> <a class="button-link" href="{% url 'requisition_list' %}">Quay lại danh sách</a></p>
+</form>
+{% endblock %}

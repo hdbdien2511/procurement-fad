@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% load vn %}
+{% block title %}Uỷ quyền duyệt thay{% endblock %}
+{% block content %}
+<h1>Uỷ quyền duyệt thay</h1>
+<p class="intro">Bạn chỉ tạo và thu hồi uỷ quyền của chính mình. Uỷ quyền đã tạo không sửa được — muốn đổi thì thu hồi và tạo mới.</p>
+
+<h2>Uỷ quyền tôi đã cấp</h2>
+<table class="data-table">
+  <caption class="visually-hidden">Danh sách uỷ quyền đã cấp</caption>
+  <thead><tr><th scope="col">Người nhận</th><th scope="col">Từ ngày</th><th scope="col">Đến ngày</th><th scope="col">Hạn mức (VND)</th><th scope="col">Loại hồ sơ</th><th scope="col">Văn bản</th><th scope="col">Trạng thái</th><th scope="col">Thao tác</th></tr></thead>
+  <tbody>
+    {% for item in given %}
+    <tr>
+      <td>{{ item.delegate.get_full_name|default:item.delegate.username }}</td>
+      <td>{{ item.start_date|date:"d/m/Y" }}</td>
+      <td>{{ item.end_date|date:"d/m/Y" }}</td>
+      <td class="num">{{ item.max_amount_vnd|vnd|default:"Không giới hạn" }}</td>
+      <td>{% if item.subject_kinds %}{{ item.subject_kinds|join:", " }}{% else %}Mọi loại{% endif %}</td>
+      <td>{% if item.letter %}<a href="{% url 'document_view' item.letter.pk %}">{{ item.letter.original_name }}</a>{% else %}—{% endif %}</td>
+      <td>{% if item.revoked_at %}Đã thu hồi {{ item.revoked_at|date:"d/m/Y H:i" }}{% elif item.end_date < today %}Đã hết hiệu lực{% else %}Còn hiệu lực{% endif %}</td>
+      <td>
+        {% if not item.revoked_at %}
+        <form method="post" action="{% url 'delegation_revoke' item.pk %}">{% csrf_token %}<button type="submit">Thu hồi</button></form>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% empty %}
+    <tr><td class="empty" colspan="8">Bạn chưa cấp uỷ quyền nào</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Tạo uỷ quyền mới</h2>
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  <p>
+    <label for="delegate">Người nhận uỷ quyền</label>
+    <select id="delegate" name="delegate" required>
+      <option value="">— Chọn người nhận —</option>
+      {% for person in candidates %}<option value="{{ person.pk }}">{{ person.get_full_name|default:person.username }}</option>{% endfor %}
+    </select>
+  </p>
+  <p><label for="start_date">Từ ngày</label> <input id="start_date" type="date" name="start_date" value="{{ today|date:'Y-m-d' }}" required></p>
+  <p><label for="end_date">Đến ngày</label> <input id="end_date" type="date" name="end_date" value="{{ today|date:'Y-m-d' }}" required></p>
+  <p><label for="max_amount_vnd">Hạn mức tối đa (VND, để trống là không giới hạn)</label> <input id="max_amount_vnd" type="text" inputmode="numeric" name="max_amount_vnd"></p>
+  <fieldset>
+    <legend>Loại hồ sơ (không chọn = mọi loại)</legend>
+    <p><label><input type="checkbox" name="subject_kinds" value="requisition"> Tờ trình mua sắm</label></p>
+    <p><label><input type="checkbox" name="subject_kinds" value="budget_change"> Đề nghị bổ sung/điều chuyển ngân sách</label></p>
+  </fieldset>
+  <p><label for="letter">Văn bản uỷ quyền (PDF/ảnh, không bắt buộc)</label> <input id="letter" type="file" name="letter"></p>
+  <p><button type="submit">Tạo uỷ quyền</button></p>
+</form>
+
+<h2>Uỷ quyền tôi được nhận</h2>
+<ul>
+  {% for item in received %}
+  <li>{{ item.delegator.get_full_name|default:item.delegator.username }}: {{ item.start_date|date:"d/m/Y" }} – {{ item.end_date|date:"d/m/Y" }}{% if item.revoked_at %} (đã thu hồi){% endif %}</li>
+  {% empty %}
+  <li>Bạn chưa được uỷ quyền duyệt thay.</li>
+  {% endfor %}
+</ul>
+{% endblock %}

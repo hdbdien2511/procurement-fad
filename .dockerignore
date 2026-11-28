@@ -1,0 +1,34 @@
+# Bối cảnh build của deploy/Dockerfile là gốc repo: chỉ cần requirements.lock, pyproject.toml, src/.
+# Giữ bối cảnh nhỏ cũng là biện pháp an toàn: .env, chứng chỉ, bản sao lưu không được vào ảnh.
+.git
+.github
+.gitignore
+.dockerignore
+.venv
+.claude
+.superpowers
+.pytest_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.py[cod]
+*.egg-info
+
+# Cấu hình và khoá bí mật của máy chủ
+.env
+deploy/.env
+deploy/certs
+deploy/backups
+
+# Không cần trong ảnh chạy
+deploy
+docs
+tests
+scripts
+sample-data
+media
+staticfiles
+graphify-out
+README.md
+pytest.ini
+requirements-dev.lock

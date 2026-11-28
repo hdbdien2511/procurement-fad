@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h1>{{ heading }}</h1>
+<p class="intro">Tải tệp lên để xem báo cáo làm sạch (chạy thử, chưa ghi gì), sau đó bấm “Xác nhận nhập”. Tệp tối đa {{ max_upload_mb }} MB.</p>
+
+<form method="post" enctype="multipart/form-data">
+  {% csrf_token %}
+  <p><label for="budget_unit_code">Mã đơn vị ngân sách</label> <input id="budget_unit_code" type="text" name="budget_unit_code" required></p>
+  <p><label for="year">Năm ngân sách</label> <input id="year" type="number" name="year" min="2000" max="2100" required></p>
+  <p>
+    <label for="managing_org_unit_code">Đơn vị quản lý (chỉ cần khi đơn vị ngân sách chưa tồn tại)</label>
+    <select id="managing_org_unit_code" name="managing_org_unit_code">
+      <option value="">— Không tạo mới —</option>
+      {% for unit in org_units %}<option value="{{ unit.code }}">{{ unit }}</option>{% endfor %}
+    </select>
+  </p>
+  <p><label for="file">Tệp Excel ngân sách</label> <input id="file" type="file" name="file" accept=".xlsx" required></p>
+  <p><button type="submit">Kiểm tra tệp</button></p>
+</form>
+
+{% include "ui/_import_report.html" %}
+
+{% if pending %}
+<h2>Xác nhận nhập</h2>
+<p>Tệp đang chờ: <strong>{{ pending.name }}</strong> · đơn vị {{ pending.budget_unit_code }} · năm {{ pending.year }}.</p>
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="confirm">
+  <button type="submit">Xác nhận nhập</button>
+</form>
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="cancel">
+  <button type="submit">Bỏ tệp đang chờ</button>
+</form>
+{% endif %}
+{% endblock %}
