@@ -17,10 +17,15 @@ BUOC="chuẩn bị"
 BAN_LUI=""
 HOAN_TAT=0
 DA_THAY_DOI=0
+HUY=0  # người dùng chủ động huỷ ở bước xác nhận: không phải lỗi, không cần hướng dẫn lùi
 # Bẫy EXIT (không phải ERR): `loi` kết thúc bằng `exit` và phần lớn lỗi đi qua dạng `lệnh || loi`
 # (ví dụ chờ healthcheck quá 120 giây), nên bẫy ERR bỏ sót đúng những đường lỗi hay gặp nhất.
 bao_loi_khoi_phuc() {
 	[ "$HOAN_TAT" -eq 1 ] && return 0
+	if [ "$HUY" -eq 1 ]; then
+		printf 'Đã huỷ, chưa thay đổi gì.\n' >&2
+		return 0
+	fi
 	printf 'LỖI: khôi phục dừng ở bước: %s\n' "$BUOC" >&2
 	if [ "$DA_THAY_DOI" -eq 0 ]; then
 		printf 'Chưa thay đổi gì trên hệ thống (dịch vụ vẫn đang chạy như trước).\n' >&2
@@ -78,7 +83,10 @@ say "Bản sao lưu đọc được."
 say ""
 say "TOÀN BỘ dữ liệu hiện tại trong cơ sở dữ liệu $POSTGRES_DB sẽ bị thay thế."
 read -r -p 'Nhập KHOI-PHUC để xác nhận: ' tra_loi
-[ "$tra_loi" = "KHOI-PHUC" ] || loi "Đã huỷ: không khôi phục gì."
+if [ "$tra_loi" != "KHOI-PHUC" ]; then
+	HUY=1
+	exit 2  # khác 0 để cron/script gọi biết là chưa khôi phục, nhưng không phải lỗi hệ thống
+fi
 
 # --- 3. Sao lưu hiện trạng để còn đường lùi ---------------------------------
 BUOC="sao lưu hiện trạng trước khi khôi phục (chưa thay đổi gì)"

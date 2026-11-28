@@ -291,6 +291,8 @@ def test_restore_script_verifies_before_destroying():
     assert "rm -rf /app/media/*" not in restore
     assert ".restore-new" in restore and "find /app/media -mindepth 1" in restore
     assert "trap bao_loi_khoi_phuc EXIT" in restore
+    # người dùng huỷ ở bước xác nhận không phải lỗi: không in "dừng ở bước ..."
+    assert "HUY=1" in restore and "Đã huỷ, chưa thay đổi gì." in restore
     assert "dc restart nginx" in restore
 
 
@@ -299,15 +301,16 @@ def test_upgrade_script_contract():
     assert "backup.sh" in upgrade and upgrade.index("backup.sh") < upgrade.index("migrate")
     assert "apply_db_grants" in upgrade
     # giữ ảnh cũ để lùi được, và in rõ đường lùi khi lỗi
-    assert "procurement-app:previous" in upgrade
-    assert upgrade.index("procurement-app:previous") < upgrade.index("dc build")
     assert "trap bao_loi_nang_cap EXIT" in upgrade
-    # thẻ previous là "bản tốt gần nhất": chạy lại sau một lần lỗi không được ghi đè nó
-    tag_block = upgrade[upgrade.index("ANH_CU_ID=") : upgrade.index("dc build")]
-    assert "if docker image inspect procurement-app:previous" in tag_block
+    assert 'ANH_TOT="procurement-app:last-good"' in upgrade
+    # thẻ last-good chỉ được dịch sang ảnh MỚI sau khi nâng cấp xong (ảnh đã thật sự chạy)
+    assert upgrade.rindex('docker tag procurement-app:latest "$ANH_TOT"') > upgrade.index("collectstatic")
+    # lần gieo thẻ ở đầu chỉ chạy khi thẻ CHƯA tồn tại
+    assert 'if docker image inspect "$ANH_TOT"' in upgrade
+    tag_block = upgrade[upgrade.index("BUOC=\"dựng ảnh mới\"") : upgrade.index("dc build")]
     assert "procurement-app:before-" in tag_block  # mỗi lần chạy giữ thêm một thẻ riêng
-    # con trỏ previous chỉ dịch lên sau khi nâng cấp xong
-    assert upgrade.index('docker tag "$ANH_CU_ID" procurement-app:previous') > upgrade.index("collectstatic")
+    assert "SO_THE_GIU" in upgrade and "docker rmi" in tag_block  # và dọn thẻ cũ
+    assert 'printf \'  2. docker tag %s procurement-app:latest\\n\' "$ANH_TOT"' in upgrade
     assert "dc restart app worker nginx" not in upgrade  # `up -d` đã tạo lại container cần thiết
 
 
@@ -356,7 +359,7 @@ def test_install_doc_covers_handover_topics():
         "--commit",
         "docker compose cp",
         # lùi phiên bản mới dùng được: cần cả ảnh cũ, không chỉ bản sao lưu
-        "procurement-app:previous",
+        "procurement-app:last-good",
         # không được nói sai về quyền của role owner
         "superuser",
     ):

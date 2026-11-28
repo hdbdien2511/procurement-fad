@@ -215,14 +215,20 @@ cd /opt/procurement/deploy && docker compose exec app python src/manage.py audit
 cd /opt/procurement && git pull && deploy/scripts/upgrade.sh
 ```
 
-Thứ tự: **sao lưu trước** → giữ ảnh đang chạy (thẻ `procurement-app:before-<dấu thời gian>`, và
-`procurement-app:previous` nếu chưa có) → dựng/tải ảnh mới → `migrate` (role owner) →
-`apply_db_grants` → khởi động lại → gom lại tệp tĩnh → dịch thẻ `previous` sang ảnh vừa thay ra.
+Thứ tự: **sao lưu trước** → giữ ảnh đang chạy dưới thẻ `procurement-app:before-<dấu thời gian>` →
+dựng/tải ảnh mới → `migrate` (role owner) → `apply_db_grants` → khởi động lại → gom lại tệp tĩnh →
+dịch thẻ `procurement-app:last-good` sang **ảnh vừa nâng cấp**.
 
-**Thẻ `previous` luôn là bản tốt gần nhất:** nó chỉ được dịch ở cuối một lần nâng cấp **thành
-công**, nên chạy lại `upgrade.sh` sau một lần lỗi không ghi đè nó bằng ảnh hỏng. Ngoài ra mỗi lần
-chạy để lại một thẻ `before-<dấu thời gian>` riêng (không bao giờ bị ghi đè);
-`docker image ls procurement-app` liệt kê tất cả.
+**Thẻ `last-good` = ảnh đã thật sự chạy được.** Nó chỉ được dịch ở **cuối một lần nâng cấp thành
+công** (sau khi `app` đã khoẻ), nên:
+
+- nâng cấp lỗi → `last-good` giữ nguyên, lùi về nó là về đúng bản đang chạy trước khi nâng cấp;
+- "lỗi → lỗi → thành công" → `last-good` là ảnh của lần thành công, không bao giờ là ảnh hỏng của
+  lần giữa.
+
+Lần chạy đầu tiên (chưa có thẻ) thì `last-good` được gieo từ ảnh đang chạy. Mỗi lần chạy còn để lại
+một thẻ `before-<dấu thời gian>` riêng (không bị ghi đè); chỉ giữ **5** thẻ mới nhất, các thẻ cũ hơn
+được bỏ. `docker image ls procurement-app` liệt kê tất cả.
 
 ### Lùi về phiên bản trước
 
@@ -233,7 +239,7 @@ chạy để lại một thẻ `before-<dấu thời gian>` riêng (không bao g
 ```bash
 cd /opt/procurement
 git checkout <commit trước khi git pull>              # 1. mã nguồn cũ
-docker tag procurement-app:previous procurement-app:latest   # 2. ảnh cũ
+docker tag procurement-app:last-good procurement-app:latest   # 2. ảnh cũ
 deploy/scripts/restore.sh <bản sao lưu ở bước 1 của upgrade>  # 3. dữ liệu + lược đồ cũ
 cd deploy && docker compose up -d                     # 4. khởi động lại
 ```
@@ -241,8 +247,8 @@ cd deploy && docker compose up -d                     # 4. khởi động lại
 `upgrade.sh` in đường dẫn bản sao lưu, danh sách ảnh đang giữ và các bước lùi (kể cả khi nâng cấp
 lỗi giữa đường); giữ lại thông tin này cho tới khi chắc chắn bản mới chạy tốt.
 
-Nếu đã thử nâng cấp nhiều lần thì chọn ảnh theo dấu thời gian trong `docker image ls
-procurement-app` thay vì tin thẻ `previous`.
+Muốn lùi **một bản đã nâng cấp xong** (lúc đó `last-good` chính là bản mới) thì chọn thẻ
+`before-<dấu thời gian>` gần nhất trong `docker image ls procurement-app` thay cho bước 2.
 
 ---
 

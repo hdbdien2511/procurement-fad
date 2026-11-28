@@ -17,4 +17,9 @@ openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
   -keyout privkey.pem -out fullchain.pem -subj "/CN=mua-sam.hsc.local"
 ```
 
-Sau khi thay chứng chỉ mới: `docker compose -f ../docker-compose.yml restart nginx`.
+Sau khi thay chứng chỉ mới, nạp lại nginx — chạy **từ thư mục `deploy/`** để Docker Compose nạp cả
+`docker-compose.override.yml` nếu có:
+
+```bash
+cd .. && docker compose restart nginx
+```
