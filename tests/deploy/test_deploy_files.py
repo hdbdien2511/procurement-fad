@@ -46,17 +46,55 @@ def test_compose_app_and_worker_share_image_env_and_media(compose):
     assert app["build"]["dockerfile"] == "deploy/Dockerfile"
     assert app["image"] == worker["image"]
     for svc in (app, worker):
-        assert ".env" in str(svc["env_file"])
+        assert svc["environment"]["DATABASE_URL"]
         assert any(v.startswith("media:") for v in svc["volumes"])
         assert svc["depends_on"]["db"]["condition"] == "service_healthy"
+    assert app["environment"] == worker["environment"]  # cùng bộ biến (YAML anchor)
     assert "run_worker" in " ".join(worker["command"])  # worker chạy job định kỳ, không chạy gunicorn
     assert "ports" not in worker and "ports" not in app  # chỉ nginx mở cổng ra ngoài
+
+
+OWNER_VARS = ("DATABASE_URL_OWNER", "DB_OWNER_USER", "DB_OWNER_PASSWORD", "POSTGRES_PASSWORD")
+
+
+def test_app_and_worker_never_see_the_schema_owner_credentials(compose):
+    """Role sở hữu schema là superuser của cụm dữ liệu nên không được có trong container ứng dụng:
+    rò biến môi trường hay RCE trong app sẽ vô hiệu hoá chính biện pháp chỉ-ghi-thêm của task này."""
+    for name in ("app", "worker"):
+        svc = compose["services"][name]
+        # `.env` chứa mật khẩu owner nên không được nạp cả tệp vào container
+        assert "env_file" not in svc, f"{name} không được dùng env_file: .env"
+        env = svc["environment"]
+        assert isinstance(env, dict)
+        for var in OWNER_VARS:
+            assert var not in env, f"{name} không được nhận biến {var}"
+            for key, value in env.items():
+                assert var not in str(value), f"{name}.{key} nội suy từ biến owner {var}"
+
+
+def test_healthcheck_variables_are_defined_for_that_service(compose):
+    """`$${VAR}` trong healthcheck do shell TRONG container giải nghĩa, nên biến phải tồn tại ở đó."""
+    checked = 0
+    for name, svc in compose["services"].items():
+        hc = svc.get("healthcheck") or {}
+        test = hc.get("test")
+        if not test or hc.get("disable"):
+            continue
+        used = set(re.findall(r"\$\$\{?([A-Z][A-Z0-9_]*)\}?", " ".join(test)))
+        if not used:
+            continue
+        checked += 1
+        defined = set(svc.get("environment") or {})
+        if svc.get("env_file"):  # cả tệp .env được nạp: không kiểm tra được ở đây
+            continue
+        missing = used - defined
+        assert not missing, f"healthcheck của {name} dùng biến chưa khai báo cho dịch vụ đó: {sorted(missing)}"
+    assert checked, "không có healthcheck nào dùng biến môi trường?"
 
 
 def test_compose_nginx_serves_443_static_and_readonly_certs(compose):
     nginx = compose["services"]["nginx"]
     assert [p for p in nginx["ports"] if str(p).startswith("443:")]
-    assert all(not str(p).startswith("80:") for p in nginx["ports"])
     mounts = nginx["volumes"]
     assert any(m.startswith("./certs") and m.endswith(":ro") for m in mounts)
     assert any(m.startswith("static:") and m.endswith(":ro") for m in mounts)
@@ -107,10 +145,23 @@ def test_nginx_conf_security_directives():
     assert "Referrer-Policy" in conf and "same-origin" in conf
     assert "client_max_body_size 26m;" in conf
     assert "limit_req_zone" in conf
-    login_block = conf[conf.index("location /dang-nhap/") :]
-    assert "limit_req zone=" in login_block[: login_block.index("}")]
+    for path in ("location /dang-nhap/", "location /xac-thuc-otp/"):
+        block = conf[conf.index(path) :]
+        assert "limit_req zone=" in block[: block.index("}")], path
     for header in ("X-Forwarded-For", "X-Forwarded-Proto", "Host"):
         assert f"proxy_set_header {header}" in conf
+    # Django gửi cùng bốn header này: ẩn bản của ứng dụng để phản hồi không có header trùng
+    for header in ("Strict-Transport-Security", "X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options"):
+        assert f"proxy_hide_header {header};" in conf
+
+
+def test_nginx_port_80_only_redirects_to_https():
+    directives = _nginx_directives()
+    assert "listen 80;" in directives
+    block = directives[directives.index("listen 80;") :]
+    block = block[: block.index("}")]
+    assert "return 301 https://$host$request_uri;" in block
+    assert "proxy_pass" not in block and "root" not in block
 
 
 def test_dockerfile_runs_as_non_root_from_lockfile():
@@ -124,13 +175,28 @@ def test_dockerfile_runs_as_non_root_from_lockfile():
     assert "gunicorn" in text and '"-w", "3"' in text
 
 
+def test_dockerignore_keeps_build_context_small_and_free_of_secrets():
+    """Bối cảnh build là gốc repo: khoá bí mật, chứng chỉ, bản sao lưu không được đi vào ảnh."""
+    lines = {
+        line.strip()
+        for line in (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    for needed in (".git", ".venv", "graphify-out", ".env", "deploy/.env", "deploy/backups", "docs", "tests"):
+        assert needed in lines, f".dockerignore thiếu {needed}"
+    # những thứ Dockerfile thực sự COPY không được bị loại
+    for kept in ("requirements.lock", "pyproject.toml", "src"):
+        assert kept not in lines, f".dockerignore không được loại {kept}"
+
+
 @pytest.mark.parametrize("name", SCRIPT_NAMES)
 def test_scripts_are_executable_strict_bash(name):
     script = SCRIPTS / name
     assert script.stat().st_mode & 0o111, f"{name} chưa có quyền thực thi"
     text = script.read_text(encoding="utf-8")
     assert text.startswith("#!/usr/bin/env bash")
-    assert "set -euo pipefail" in text
+    # -E: bẫy ERR cũng có hiệu lực khi lỗi xảy ra bên trong hàm (dc, manage_owner, ...)
+    assert "set -Eeuo pipefail" in text
 
 
 @pytest.mark.parametrize("path", sorted(SCRIPTS.glob("*.sh")) if SCRIPTS.exists() else [])
@@ -156,16 +222,44 @@ def test_install_script_contract():
     assert "docker compose" in text or "dc " in text
 
 
-def test_backup_and_restore_contract():
+def test_backup_script_contract():
     backup = (SCRIPTS / "backup.sh").read_text(encoding="utf-8")
     assert "pg_dump" in backup and "-Fc" in backup
     assert "tar" in backup and "BACKUP_DIR" in backup
     assert "BACKUP_KEEP" in backup and "30" in backup
+    # BACKUP_DIR/BACKUP_KEEP do người gọi truyền vào phải thắng giá trị trong .env
+    assert "BACKUP_DIR_ARG" in backup and "BACKUP_KEEP_ARG" in backup
+    assert backup.index("BACKUP_DIR_ARG=") < backup.index("\ndoc_env\n")
+    # ghi ra .partial rồi mới đổi tên: bản dở dang không được tính là bản sao lưu
+    assert ".partial" in backup and 'mv -- "$DB_FILE.partial"' in backup
+    assert "trap" in backup and "ERR" in backup
+    assert "tar_rc" in backup  # tar mã 1 (tệp thay đổi khi đọc) không phải lỗi chết
+
+
+def test_restore_script_verifies_before_destroying():
     restore = (SCRIPTS / "restore.sh").read_text(encoding="utf-8")
     assert "pg_restore" in restore
+    # kiểm tra cả hai tệp sao lưu TRƯỚC khi dừng dịch vụ / nạp lại dữ liệu
+    assert "pg_restore --list" in restore and "tar tzf" in restore
+    assert restore.index("pg_restore --list") < restore.index("dc stop app worker")
+    # tự sao lưu hiện trạng để còn đường lùi, trước khi phá huỷ
+    assert "backup.sh" in restore and restore.index("backup.sh") < restore.index("dc stop app worker")
+    # không xoá thẳng media: giải nén ra thư mục tạm rồi đổi chỗ (và không bỏ sót tệp ẩn)
+    assert "rm -rf /app/media/*" not in restore
+    assert ".restore-new" in restore and "find /app/media -mindepth 1" in restore
+    assert "trap bao_loi_khoi_phuc ERR" in restore
+    assert "dc restart nginx" in restore
+
+
+def test_upgrade_script_contract():
     upgrade = (SCRIPTS / "upgrade.sh").read_text(encoding="utf-8")
     assert "backup.sh" in upgrade and upgrade.index("backup.sh") < upgrade.index("migrate")
     assert "apply_db_grants" in upgrade
+    # giữ ảnh cũ để lùi được, và in rõ đường lùi khi lỗi
+    assert "procurement-app:previous" in upgrade
+    assert upgrade.index("procurement-app:previous") < upgrade.index("dc build")
+    assert "trap bao_loi_nang_cap ERR" in upgrade
+    assert "dc restart app worker nginx" not in upgrade  # `up -d` đã tạo lại container cần thiết
 
 
 def test_init_sql_creates_runtime_role():
@@ -208,8 +302,27 @@ def test_install_doc_covers_handover_topics():
         "procurement_owner",
         "procurement_app",
         "SMTP",
+        # cú pháp lệnh phải đúng với lệnh thật (xem management/commands/*)
+        "sync_hris --fake",
+        "--commit",
+        "docker compose cp",
+        # lùi phiên bản mới dùng được: cần cả ảnh cũ, không chỉ bản sao lưu
+        "procurement-app:previous",
+        # không được nói sai về quyền của role owner
+        "superuser",
     ):
         assert needle in doc, f"Hướng dẫn cài đặt thiếu: {needle}"
+
+
+def test_install_doc_command_syntax_matches_the_real_commands():
+    """Hướng dẫn phải khớp tham số bắt buộc của lệnh (brief đợt 1: HRIS thật chưa có)."""
+    doc = INSTALL_DOC.read_text(encoding="utf-8")
+    assert "import_budget <tệp.xlsx> --unit" in doc
+    assert "--year" in doc
+    sync = (REPO / "src/apps/accounts/management/commands/sync_hris.py").read_text(encoding="utf-8")
+    assert "--fake" in sync  # nếu lệnh đổi (nối HRIS thật) thì phải sửa lại hướng dẫn
+    budget = (REPO / "src/apps/budget/management/commands/import_budget.py").read_text(encoding="utf-8")
+    assert '"--unit", required=True' in budget and '"--year", required=True' in budget
 
 
 def test_readme_explains_env_loading():

@@ -112,6 +112,10 @@ AXES_COOLOFF_TIME = timedelta(minutes=15)
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_TEMPLATE = "accounts/locked.html"
+# Khoá theo IP thật của người dùng, không phải IP của container nginx. Dùng chung hàm với audit:
+# chỉ tin X-Forwarded-For khi TRUSTED_PROXY_COUNT > 0 (django-ipware không có trong phụ thuộc, nên
+# các biến AXES_IPWARE_* không có tác dụng).
+AXES_CLIENT_IP_CALLABLE = "apps.audit.middleware.client_ip"
 
 # Entra ID OIDC: chỉ bật khi đủ cả ba biến môi trường
 OIDC_RP_CLIENT_ID = env("OIDC_RP_CLIENT_ID")

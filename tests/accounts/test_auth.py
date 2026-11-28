@@ -165,3 +165,19 @@ def test_auth_method_recorded_in_session(client, pw_user, password):
     client.post("/dang-xuat/")
     client.post("/dang-nhap/", {"username": "bob", "password": password})
     assert client.session["auth_method"] == "password"
+
+
+def test_axes_locks_on_the_real_client_ip_not_the_proxy(settings):
+    """Khoá tạm phải tính theo IP người dùng; nếu lấy IP của container nginx thì một người thử sai
+    mật khẩu sẽ khoá cả công ty. django-ipware không có trong phụ thuộc nên các biến AXES_IPWARE_*
+    vô hiệu: axes phải dùng chính hàm client_ip của audit (tôn trọng TRUSTED_PROXY_COUNT)."""
+    from axes.helpers import get_client_ip_address
+    from django.test import RequestFactory
+
+    assert settings.AXES_CLIENT_IP_CALLABLE == "apps.audit.middleware.client_ip"
+    settings.TRUSTED_PROXY_COUNT = 1
+    req = RequestFactory().get("/dang-nhap/", REMOTE_ADDR="172.18.0.4", HTTP_X_FORWARDED_FOR="203.0.113.9")
+    assert get_client_ip_address(req) == "203.0.113.9"
+    # không có proxy tin cậy thì không được tin header do khách gửi
+    settings.TRUSTED_PROXY_COUNT = 0
+    assert get_client_ip_address(req) == "172.18.0.4"

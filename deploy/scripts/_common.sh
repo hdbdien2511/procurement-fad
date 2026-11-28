@@ -50,8 +50,10 @@ doc_env() {
 manage() { dc exec -T app python src/manage.py "$@"; }
 
 # Lệnh manage.py bằng role sở hữu schema (procurement_owner): migrate, apply_db_grants.
+# Chuỗi kết nối truyền qua môi trường của tiến trình (`-e DATABASE_URL` không kèm giá trị) nên không
+# xuất hiện trong danh sách tham số của tiến trình docker trên máy chủ.
 manage_owner() {
-	dc run --rm -T -e DATABASE_URL="$DATABASE_URL_OWNER" app python src/manage.py "$@"
+	DATABASE_URL="$DATABASE_URL_OWNER" dc run --rm -T -e DATABASE_URL app python src/manage.py "$@"
 }
 
 # Chờ healthcheck của một dịch vụ chuyển sang "healthy" (tối đa ~120 giây).

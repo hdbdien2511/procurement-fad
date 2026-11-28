@@ -18,7 +18,7 @@ Toàn bộ bộ cài đặt nằm trong thư mục `deploy/` của repo.
 | CPU | 4 vCPU |
 | RAM | 8 GB (giới hạn trong compose: app 1 GB, db 1 GB, worker 512 MB, nginx 256 MB) |
 | Ổ đĩa | 100 GB SSD (CSDL + chứng từ lưu **vĩnh viễn**, nên theo dõi dung lượng) |
-| Mạng | Mở cổng **443/TCP** từ mạng nội bộ HSC tới máy chủ |
+| Mạng | Mở cổng **443/TCP** từ mạng nội bộ HSC tới máy chủ (cổng **80/TCP** chỉ để chuyển hướng sang HTTPS; có thể không mở nếu không cần) |
 | Ra ngoài | HTTPS tới `login.microsoftonline.com` và `graph.microsoft.com` (chỉ khi bật Entra ID); SMTP tới máy chủ thư của HSC |
 | Phần mềm | Docker Engine 27+ kèm plugin Docker Compose v2, `git`, `openssl` |
 
@@ -99,8 +99,11 @@ môi trường thử, không dùng cho máy chủ thật).
 ## 3. Biến môi trường
 
 Tệp `deploy/.env` do `install.sh` sinh ra. **`.env` được Docker Compose đọc**, không phải do
-`manage.py` đọc: ứng dụng trong container chỉ thấy biến vì Compose truyền vào (`env_file`). Khi chạy
-lệnh trực tiếp ngoài Docker (máy lập trình) phải tự nạp: `set -a && . ./.env && set +a`.
+`manage.py` đọc. Tệp này **không** được nạp cả vào container: `docker-compose.yml` liệt kê đúng
+những biến mà `app`/`worker` cần (khối `x-app-env`), nên mật khẩu của role sở hữu schema
+(`DB_OWNER_PASSWORD`, `DATABASE_URL_OWNER`) **không có trong môi trường của ứng dụng** — đó là một
+phần của biện pháp bảo vệ bảng chỉ-ghi-thêm. Khi chạy lệnh trực tiếp ngoài Docker (máy lập trình)
+phải tự nạp: `set -a && . ./.env && set +a`.
 
 Sửa `.env` xong phải khởi động lại: `docker compose -f docker-compose.yml up -d`.
 
@@ -112,7 +115,7 @@ Sửa `.env` xong phải khởi động lại: `docker compose -f docker-compose
 | `SITE_URL` | có | Địa chỉ gốc (`https://<tên miền>`) dùng dựng liên kết tuyệt đối trong email nhắc việc |
 | `APP_ENCRYPTION_KEY` | có | Khoá Fernet mã hoá dữ liệu nhạy cảm trong CSDL (mật khẩu SMTP khai trên giao diện). **Mất khoá là không đọc lại được** các giá trị đã mã hoá — sao lưu cùng `.env` |
 | `DATABASE_URL` | có | Kết nối của ứng dụng, dùng role `procurement_app` (chỉ DML) |
-| `DATABASE_URL_OWNER` | có | Kết nối của role `procurement_owner`, chỉ dùng cho `migrate` và `apply_db_grants` |
+| `DATABASE_URL_OWNER` | có | Kết nối của role `procurement_owner`, chỉ dùng cho `migrate` và `apply_db_grants`; **không** được truyền vào container `app`/`worker` |
 | `POSTGRES_DB`, `DB_OWNER_USER`, `DB_OWNER_PASSWORD` | có | Cấu hình container PostgreSQL (role sở hữu schema) |
 | `DB_APP_USER`, `DB_APP_PASSWORD` | có | Role runtime; `deploy/postgres/init.sql` tạo role này khi khởi tạo cụm dữ liệu |
 | `TRUSTED_PROXY_COUNT` | không | Số proxy tin cậy trước ứng dụng. Có nginx = `1` (để audit ghi đúng IP người dùng) |
@@ -155,7 +158,12 @@ Mỗi lần chạy tạo trong `BACKUP_DIR` hai tệp có dấu thời gian:
 - `db-<YYYYmmdd-HHMMSS>.dump` — `pg_dump -Fc` (nén, dùng cho `pg_restore`);
 - `media-<YYYYmmdd-HHMMSS>.tar.gz` — toàn bộ chứng từ (`MEDIA_ROOT`).
 
-Chỉ giữ lại `BACKUP_KEEP` bản mới nhất của mỗi loại (mặc định 30).
+Chỉ giữ lại `BACKUP_KEEP` bản mới nhất của mỗi loại (mặc định 30). Biến truyền trực tiếp cho lệnh
+thắng giá trị trong `.env`: `BACKUP_DIR=/mnt/backup ./scripts/backup.sh`.
+
+Tệp được ghi ra `*.partial` rồi mới đổi tên khi thành công, nên một bản dở dang (hết đĩa, mất kết
+nối) không bao giờ bị tính là bản sao lưu hợp lệ. Nếu thấy tệp `*.partial` còn lại thì lần chạy đó
+đã lỗi — xem log cron.
 
 Hẹn giờ hằng ngày (ví dụ 1 giờ sáng) trong `crontab -e`:
 
@@ -173,9 +181,21 @@ dữ liệu nhạy cảm trong bản sao lưu.
 /opt/procurement/deploy/scripts/restore.sh /đường/dẫn/db-20261127-010000.dump
 ```
 
-Script hỏi xác nhận (phải nhập đúng `KHOI-PHUC`), dừng `app` và `worker`, nạp lại CSDL
-(`pg_restore --clean --if-exists`), nạp lại chứng từ từ tệp `media-*.tar.gz` cùng dấu thời gian
-(hoặc tệp chỉ ở tham số thứ hai), cấp lại quyền cho role runtime rồi khởi động lại dịch vụ.
+Trình tự của script:
+
+1. **kiểm tra hai tệp sao lưu đọc được** (`pg_restore --list`, `tar tzf`) — nếu tệp hỏng thì dừng
+   ngay, **chưa thay đổi gì**;
+2. hỏi xác nhận (phải nhập đúng `KHOI-PHUC`);
+3. **sao lưu hiện trạng** (gọi `backup.sh`) và in ra đường dẫn "bản lùi" — nếu khôi phục sai bản thì
+   còn đường quay lại;
+4. dừng `app` và `worker` (CSDL vẫn chạy);
+5. nạp lại CSDL (`pg_restore --clean --if-exists`);
+6. nạp lại chứng từ: giải nén ra thư mục tạm **trong** volume media rồi mới đổi chỗ (chứng từ hiện
+   tại chỉ bị thay sau khi giải nén xong);
+7. cấp lại quyền cho role runtime (`apply_db_grants`) vì `pg_restore` tạo lại bảng;
+8. khởi động lại toàn bộ dịch vụ (kể cả nginx).
+
+Nếu script dừng giữa đường, nó in ra bước đang chạy, đường dẫn bản lùi và lệnh cần chạy tiếp.
 
 Sau khi khôi phục nên kiểm tra chuỗi nhật ký audit:
 
@@ -189,8 +209,25 @@ docker compose -f /opt/procurement/deploy/docker-compose.yml exec app python src
 cd /opt/procurement && git pull && deploy/scripts/upgrade.sh
 ```
 
-Thứ tự: **sao lưu trước** → dựng/tải ảnh mới → `migrate` (role owner) → `apply_db_grants` → khởi
-động lại → gom lại tệp tĩnh. Nếu có sự cố thì dùng `restore.sh` với bản sao lưu vừa tạo ở bước 1.
+Thứ tự: **sao lưu trước** → gắn thẻ ảnh đang chạy thành `procurement-app:previous` → dựng/tải ảnh
+mới → `migrate` (role owner) → `apply_db_grants` → khởi động lại → gom lại tệp tĩnh.
+
+### Lùi về phiên bản trước
+
+`migrate` đã đổi lược đồ CSDL và ảnh mới đã mang tên `procurement-app:latest`, nên **chỉ chạy
+`restore.sh` là chưa đủ**: phải đưa cả mã nguồn, ảnh và dữ liệu về cùng một mốc. Làm đủ bốn bước
+(script cũng in đúng bốn bước này khi nâng cấp lỗi):
+
+```bash
+cd /opt/procurement
+git checkout <commit trước khi git pull>              # 1. mã nguồn cũ
+docker tag procurement-app:previous procurement-app:latest   # 2. ảnh cũ
+deploy/scripts/restore.sh <bản sao lưu ở bước 1 của upgrade>  # 3. dữ liệu + lược đồ cũ
+docker compose -f deploy/docker-compose.yml up -d     # 4. khởi động lại
+```
+
+`upgrade.sh` in đường dẫn bản sao lưu và nhắc lại thẻ ảnh `procurement-app:previous` ở cuối mỗi lần
+chạy; giữ lại hai thông tin này cho tới khi chắc chắn bản mới chạy tốt.
 
 ---
 
@@ -210,20 +247,37 @@ docker compose exec app python src/manage.py <lệnh>
 |---|---|
 | `enroll_totp <tên đăng nhập>` | Tạo thiết bị TOTP và in đường dẫn `otpauth://` (khi người dùng mất thiết bị) |
 | `create_sys_admin --username … --email …` | Tạo `SYS_ADMIN` đầu tiên (chỉ chạy được khi hệ thống chưa có `SYS_ADMIN` nào) |
-| `sync_hris` | Đồng bộ đơn vị và người dùng từ HRIS |
-| `import_budget <tệp.xlsx>` | Nhập sổ ngân sách từ workbook Budget Control |
-| `import_vendors <tệp.xlsx>` | Nhập danh mục nhà cung cấp |
+| `sync_hris --fake <đường dẫn JSON>` | Đồng bộ đơn vị và người dùng từ tệp JSON HRIS. **Đợt 1 chưa nối HRIS thật** (kết nối thật thuộc đợt 4): chạy không có `--fake` thì lệnh báo lỗi |
+| `import_budget <tệp.xlsx> --unit <mã đơn vị ngân sách> --year <năm> [--commit]` | Nhập sổ ngân sách từ workbook Budget Control. **Mặc định chạy thử** và chỉ in báo cáo làm sạch; thêm `--commit` mới ghi. Thêm `--org-unit <mã>` khi tạo mới đơn vị ngân sách, `--user <tên đăng nhập>` để ghi vào audit |
+| `import_vendors <tệp.xlsx> [--commit]` | Nhập danh mục nhà cung cấp từ sheet `L9_Code`. Mặc định chạy thử, thêm `--commit` mới ghi |
 | `audit_verify` | Kiểm tra chuỗi băm của nhật ký audit |
 | `run_worker --once` | Chạy một lượt job định kỳ (gửi email tồn, nhắc SLA) để chẩn đoán |
 
-Hai lệnh phải chạy bằng role **owner** (không dùng `exec app` thường):
+**Đưa tệp .xlsx / .json vào container** trước khi nhập (container không thấy ổ đĩa máy chủ):
 
 ```bash
-docker compose run --rm -e DATABASE_URL="$DATABASE_URL_OWNER" app python src/manage.py migrate
-docker compose run --rm -e DATABASE_URL="$DATABASE_URL_OWNER" app python src/manage.py apply_db_grants
+cd /opt/procurement/deploy
+docker compose cp "/home/itadmin/Budget Control 2026.xlsx" app:/tmp/budget.xlsx
+docker compose exec app python src/manage.py import_budget /tmp/budget.xlsx --unit ITD --year 2026
+# xem báo cáo làm sạch, sửa Excel nếu cần, rồi chạy lại kèm --commit
+docker compose exec app python src/manage.py import_budget /tmp/budget.xlsx --unit ITD --year 2026 --commit
 ```
 
-(`upgrade.sh` đã làm sẵn hai bước này; nạp biến bằng `set -a && . ./.env && set +a` nếu chạy tay.)
+Tệp trong `/tmp` của container mất khi container được tạo lại — đó là chỗ tạm, đúng mục đích.
+
+Hai lệnh phải chạy bằng role **owner** (không dùng `exec app` thường). Chuỗi kết nối truyền qua môi
+trường để không nằm trong danh sách tiến trình:
+
+```bash
+cd /opt/procurement/deploy
+set -a && . ./.env && set +a        # nạp .env vào shell (chỉ cần khi chạy tay)
+DATABASE_URL="$DATABASE_URL_OWNER" docker compose run --rm -e DATABASE_URL app \
+  python src/manage.py migrate
+DATABASE_URL="$DATABASE_URL_OWNER" docker compose run --rm -e DATABASE_URL app \
+  python src/manage.py apply_db_grants
+```
+
+(`install.sh`/`upgrade.sh` đã làm sẵn hai bước này.)
 
 ---
 
@@ -247,8 +301,10 @@ Toàn bộ dịch vụ đặt `restart: unless-stopped` nên tự khởi động
 1. `curl -k https://<tên miền>/healthz` trả `{"status": "ok", "db": "ok"}`.
 2. Đăng nhập được bằng tài khoản `SYS_ADMIN` kèm mã TOTP; vào được `/quan-tri/`.
 3. Khai SMTP trên giao diện và gửi thử một email (nhắc việc tới đúng người nhận).
-4. Khai các tham số hệ thống và tỷ giá; nhập sổ ngân sách năm và danh mục nhà cung cấp.
-5. `sync_hris` chạy đúng: số đơn vị và người dùng khớp HRIS.
+4. Khai các tham số hệ thống và tỷ giá; nhập sổ ngân sách năm và danh mục nhà cung cấp (chạy thử
+   trước, xem báo cáo làm sạch, rồi chạy lại kèm `--commit`).
+5. Đơn vị và người dùng đã có đủ: đợt 1 nạp bằng `sync_hris --fake <JSON do HRIS xuất>` (nối HRIS
+   thật thuộc đợt 4), kiểm tra số đơn vị/người dùng khớp tệp nguồn và không có ai bị vô hiệu hoá oan.
 6. Chạy thử `backup.sh` một lần và **thử khôi phục trên máy chủ thử nghiệm**.
 7. Cron sao lưu đã được hẹn giờ; dung lượng ổ đĩa còn ít nhất 50%.
 8. Chứng chỉ TLS đúng tên miền, còn hiệu lực; đã có lịch gia hạn.
@@ -261,8 +317,13 @@ Toàn bộ dịch vụ đặt `restart: unless-stopped` nên tự khởi động
 ## 10. Ghi chú bảo mật (quan trọng khi vận hành)
 
 - **Hai role CSDL.** `procurement_owner` sở hữu schema và chỉ dùng cho `migrate` /
-  `apply_db_grants`. Ứng dụng chạy bằng `procurement_app`: chỉ có SELECT/INSERT/UPDATE/DELETE, không
-  có quyền DDL. Không đổi `DATABASE_URL` sang role owner để "cho tiện".
+  `apply_db_grants`. Vì nó là `POSTGRES_USER` của ảnh postgres nên nó **là superuser của cụm dữ
+  liệu**: giữ mật khẩu của nó như khoá hệ thống. Chuỗi kết nối của role này
+  (`DATABASE_URL_OWNER`) **không** được truyền vào container `app`/`worker` (xem `x-app-env` trong
+  `docker-compose.yml`), chỉ được dùng từ máy chủ qua `docker compose run -e DATABASE_URL`.
+  Ứng dụng chạy bằng `procurement_app`: chỉ có SELECT/INSERT/UPDATE/DELETE trên các bảng được cấp,
+  không có quyền DDL. Không đổi `DATABASE_URL` sang role owner để "cho tiện" — làm vậy là trao
+  quyền superuser cho tiến trình web và vô hiệu hoá toàn bộ phần dưới đây.
 - **Bảng chỉ-ghi-thêm.** `audit_auditevent` và `budget_budgetentry` bị trigger CSDL chặn mọi
   `UPDATE`/`DELETE`, và `apply_db_grants` thu hồi luôn `UPDATE, DELETE, TRUNCATE` của role runtime.
   Nhật ký audit và bút toán ngân sách chỉ ghi thêm — sửa sai bằng bút toán điều chỉnh, không bằng

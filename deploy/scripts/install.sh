@@ -6,7 +6,7 @@
 #        --admin-user quantri --admin-email it@hsc.example.vn
 #
 # Script KHÔNG ghi đè tệp .env đã có: muốn cài lại thì xoá/đổi tên .env và xoá volume dữ liệu.
-set -euo pipefail
+set -Eeuo pipefail
 
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
