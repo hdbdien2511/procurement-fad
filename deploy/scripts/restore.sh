@@ -15,20 +15,30 @@ set -Eeuo pipefail
 
 BUOC="chuẩn bị"
 BAN_LUI=""
+HOAN_TAT=0
+DA_THAY_DOI=0
+# Bẫy EXIT (không phải ERR): `loi` kết thúc bằng `exit` và phần lớn lỗi đi qua dạng `lệnh || loi`
+# (ví dụ chờ healthcheck quá 120 giây), nên bẫy ERR bỏ sót đúng những đường lỗi hay gặp nhất.
 bao_loi_khoi_phuc() {
+	[ "$HOAN_TAT" -eq 1 ] && return 0
 	printf 'LỖI: khôi phục dừng ở bước: %s\n' "$BUOC" >&2
+	if [ "$DA_THAY_DOI" -eq 0 ]; then
+		printf 'Chưa thay đổi gì trên hệ thống (dịch vụ vẫn đang chạy như trước).\n' >&2
+		return 0
+	fi
 	if [ -n "$BAN_LUI" ]; then
 		printf 'Hiện trạng trước khi khôi phục đã được sao lưu tại: %s\n' "$BAN_LUI" >&2
 		printf 'Muốn quay về hiện trạng đó: %s/restore.sh %s\n' "$SCRIPTS_DIR" "$BAN_LUI" >&2
 	fi
 	printf 'Dịch vụ app/worker có thể đang dừng; khởi động lại bằng:\n' >&2
-	printf '  docker compose -f %s up -d\n' "$COMPOSE_FILE" >&2
+	printf '  %s up -d\n' "$(dc_cmd)" >&2
 	printf 'Nếu dừng ở bước nạp chứng từ: chứng từ cũ nằm trong /app/media/.restore-old của volume\n' >&2
 	printf 'media (KHÔNG xoá thư mục đó). Đưa về chỗ cũ bằng:\n' >&2
-	printf '  docker compose -f %s run --rm -T --no-deps --entrypoint sh app -c %s\n' "$COMPOSE_FILE" \
+	printf '  %s run --rm -T --no-deps --entrypoint sh app -c %s\n' "$(dc_cmd)" \
 		"'find /app/media/.restore-old -mindepth 1 -maxdepth 1 -exec mv -t /app/media {} +'" >&2
+	return 0
 }
-trap bao_loi_khoi_phuc ERR
+trap bao_loi_khoi_phuc EXIT
 
 DB_FILE="${1:-}"
 [ -n "$DB_FILE" ] || loi "Thiếu tham số: restore.sh <tệp db-*.dump> [tệp media-*.tar.gz]"
@@ -83,6 +93,7 @@ say "Bản lùi: ${BAN_LUI:-(không xác định)}"
 BUOC="dừng app/worker"
 say ""
 say "Đang dừng ứng dụng và worker (cơ sở dữ liệu vẫn chạy) ..."
+DA_THAY_DOI=1  # từ đây hệ thống bắt đầu bị thay đổi
 dc stop app worker
 
 BUOC="nạp lại cơ sở dữ liệu"
@@ -121,10 +132,10 @@ say "Đang khởi động lại toàn bộ dịch vụ ..."
 dc up -d
 dc restart nginx
 cho_dich_vu_khoe app
-trap - ERR
+HOAN_TAT=1
 
 say ""
 say "=== Khôi phục xong ==="
 say "Bản sao lưu hiện trạng trước khi khôi phục: ${BAN_LUI:-(không xác định)}"
 say "Hãy kiểm tra: curl -k $SITE_URL/healthz và chạy kiểm tra chuỗi audit:"
-say "    docker compose -f $COMPOSE_FILE exec app python src/manage.py audit_verify"
+say "    $(dc_cmd) exec app python src/manage.py audit_verify"

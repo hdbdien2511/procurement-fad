@@ -105,7 +105,13 @@ những biến mà `app`/`worker` cần (khối `x-app-env`), nên mật khẩu 
 phần của biện pháp bảo vệ bảng chỉ-ghi-thêm. Khi chạy lệnh trực tiếp ngoài Docker (máy lập trình)
 phải tự nạp: `set -a && . ./.env && set +a`.
 
-Sửa `.env` xong phải khởi động lại: `docker compose -f docker-compose.yml up -d`.
+Sửa `.env` xong phải khởi động lại: `cd /opt/procurement/deploy && docker compose up -d`.
+
+> **Luôn chạy `docker compose` từ thư mục `/opt/procurement/deploy`** (không truyền `-f`): khi đó
+> Compose tự nạp cả `docker-compose.override.yml` nếu có. Nếu buộc phải truyền `-f` thì phải truyền
+> **cả hai** tệp, ví dụ
+> `docker compose -f /opt/procurement/deploy/docker-compose.yml -f /opt/procurement/deploy/docker-compose.override.yml up -d`
+> — thiếu tệp ghi đè là chạy với cấu hình khác lúc cài. Các script trong `scripts/` tự xử lý việc này.
 
 | Biến | Bắt buộc | Ý nghĩa |
 |---|---|---|
@@ -200,7 +206,7 @@ Nếu script dừng giữa đường, nó in ra bước đang chạy, đường 
 Sau khi khôi phục nên kiểm tra chuỗi nhật ký audit:
 
 ```bash
-docker compose -f /opt/procurement/deploy/docker-compose.yml exec app python src/manage.py audit_verify
+cd /opt/procurement/deploy && docker compose exec app python src/manage.py audit_verify
 ```
 
 ## 7. Nâng cấp
@@ -209,8 +215,14 @@ docker compose -f /opt/procurement/deploy/docker-compose.yml exec app python src
 cd /opt/procurement && git pull && deploy/scripts/upgrade.sh
 ```
 
-Thứ tự: **sao lưu trước** → gắn thẻ ảnh đang chạy thành `procurement-app:previous` → dựng/tải ảnh
-mới → `migrate` (role owner) → `apply_db_grants` → khởi động lại → gom lại tệp tĩnh.
+Thứ tự: **sao lưu trước** → giữ ảnh đang chạy (thẻ `procurement-app:before-<dấu thời gian>`, và
+`procurement-app:previous` nếu chưa có) → dựng/tải ảnh mới → `migrate` (role owner) →
+`apply_db_grants` → khởi động lại → gom lại tệp tĩnh → dịch thẻ `previous` sang ảnh vừa thay ra.
+
+**Thẻ `previous` luôn là bản tốt gần nhất:** nó chỉ được dịch ở cuối một lần nâng cấp **thành
+công**, nên chạy lại `upgrade.sh` sau một lần lỗi không ghi đè nó bằng ảnh hỏng. Ngoài ra mỗi lần
+chạy để lại một thẻ `before-<dấu thời gian>` riêng (không bao giờ bị ghi đè);
+`docker image ls procurement-app` liệt kê tất cả.
 
 ### Lùi về phiên bản trước
 
@@ -223,11 +235,14 @@ cd /opt/procurement
 git checkout <commit trước khi git pull>              # 1. mã nguồn cũ
 docker tag procurement-app:previous procurement-app:latest   # 2. ảnh cũ
 deploy/scripts/restore.sh <bản sao lưu ở bước 1 của upgrade>  # 3. dữ liệu + lược đồ cũ
-docker compose -f deploy/docker-compose.yml up -d     # 4. khởi động lại
+cd deploy && docker compose up -d                     # 4. khởi động lại
 ```
 
-`upgrade.sh` in đường dẫn bản sao lưu và nhắc lại thẻ ảnh `procurement-app:previous` ở cuối mỗi lần
-chạy; giữ lại hai thông tin này cho tới khi chắc chắn bản mới chạy tốt.
+`upgrade.sh` in đường dẫn bản sao lưu, danh sách ảnh đang giữ và các bước lùi (kể cả khi nâng cấp
+lỗi giữa đường); giữ lại thông tin này cho tới khi chắc chắn bản mới chạy tốt.
+
+Nếu đã thử nâng cấp nhiều lần thì chọn ảnh theo dấu thời gian trong `docker image ls
+procurement-app` thay vì tin thẻ `previous`.
 
 ---
 
@@ -240,8 +255,8 @@ cd /opt/procurement/deploy
 docker compose exec app python src/manage.py <lệnh>
 ```
 
-> Lưu ý: luôn chạy từ thư mục `deploy/` (hoặc thêm `-f /opt/procurement/deploy/docker-compose.yml`)
-> để Compose tìm thấy `docker-compose.yml` và `.env`.
+> Lưu ý: luôn chạy từ thư mục `deploy/` để Compose tìm thấy `docker-compose.yml`, `.env` **và**
+> `docker-compose.override.yml` (nếu có). Xem khung lưu ý ở mục 3 nếu buộc phải truyền `-f`.
 
 | Lệnh | Việc |
 |---|---|

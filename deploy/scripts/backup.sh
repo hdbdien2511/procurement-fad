@@ -29,8 +29,21 @@ TS=$(date '+%Y%m%d-%H%M%S')
 DB_FILE="$BACKUP_DIR/db-$TS.dump"
 MEDIA_FILE="$BACKUP_DIR/media-$TS.tar.gz"
 
-# Dọn tệp dở dang nếu script dừng giữa đường (và báo rõ đã dừng ở đâu).
-trap 'rm -f -- "$DB_FILE.partial" "$MEDIA_FILE.partial"; printf "LỖI: sao lưu KHÔNG hoàn tất, không có bản mới trong %s\n" "$BACKUP_DIR" >&2' ERR
+# Bẫy EXIT (không phải ERR): `loi` kết thúc bằng `exit` và phần lớn lỗi đi qua dạng `lệnh || loi`,
+# nên chỉ bẫy ERR thì mọi đường lỗi "có kiểm soát" đều bỏ sót phần dọn dẹp.
+HOAN_TAT=0
+don_dep_khi_thoat() {
+	[ "$HOAN_TAT" -eq 1 ] && return 0
+	# bỏ tệp dở dang, và bỏ cả bản dump đã xong nhưng thiếu bản chứng từ đi kèm (một bản sao lưu
+	# chỉ dùng được khi có cả hai tệp cùng dấu thời gian)
+	rm -f -- "$DB_FILE.partial" "$MEDIA_FILE.partial"
+	if [ -f "$DB_FILE" ] && [ ! -f "$MEDIA_FILE" ]; then
+		rm -f -- "$DB_FILE"
+	fi
+	printf 'LỖI: sao lưu KHÔNG hoàn tất, không có bản mới trong %s\n' "$BACKUP_DIR" >&2
+	return 0
+}
+trap don_dep_khi_thoat EXIT
 
 say "Sao lưu cơ sở dữ liệu $POSTGRES_DB → $DB_FILE"
 umask 077
@@ -53,7 +66,8 @@ if [ "$tar_rc" -eq 1 ]; then
 fi
 [ -s "$MEDIA_FILE.partial" ] || loi "Bản sao lưu chứng từ rỗng, đã bỏ: $MEDIA_FILE"
 mv -- "$MEDIA_FILE.partial" "$MEDIA_FILE"
-trap - ERR
+# Từ đây cả hai tệp đã hoàn tất: lỗi của phần dọn bản cũ không được xoá bản vừa tạo.
+HOAN_TAT=1
 
 # Dọn bản cũ: giữ BACKUP_KEEP bản mới nhất của mỗi loại (chỉ xét tệp đã hoàn tất).
 don_ban_cu() {

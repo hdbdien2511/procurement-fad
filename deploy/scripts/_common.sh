@@ -28,6 +28,16 @@ dc() {
 	docker compose "${args[@]}" "$@"
 }
 
+# Lệnh `docker compose ...` dạng văn bản để IN RA cho người dùng chạy lại bằng tay: phải kèm cả tệp
+# ghi đè, nếu không lệnh gợi ý sẽ chạy với cấu hình khác lúc script chạy.
+dc_cmd() {
+	if [ -f "$OVERRIDE_FILE" ]; then
+		printf 'docker compose -f %s -f %s' "$COMPOSE_FILE" "$OVERRIDE_FILE"
+	else
+		printf 'docker compose -f %s' "$COMPOSE_FILE"
+	fi
+}
+
 kiem_tra_docker() {
 	command -v docker >/dev/null 2>&1 ||
 		loi "Chưa cài Docker Engine. Xem docs/05-ban-giao-it/huong-dan-cai-dat.md mục 'Chuẩn bị máy chủ'."
@@ -71,7 +81,7 @@ cho_dich_vu_khoe() {
 		fi
 		sleep 2
 	done
-	loi "Dịch vụ $service không sẵn sàng sau 120 giây. Xem log: docker compose -f $COMPOSE_FILE logs $service"
+	loi "Dịch vụ $service không sẵn sàng sau 120 giây. Xem log: $(dc_cmd) logs $service"
 }
 
 # Chuỗi bí mật an toàn, chỉ gồm ký tự base64url (không dấu, không khoảng trắng).

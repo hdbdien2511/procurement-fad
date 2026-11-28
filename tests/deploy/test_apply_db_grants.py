@@ -65,11 +65,24 @@ def test_dry_run_prints_sql_in_vietnamese(capsys):
     assert "procurement_app" in out
 
 
+def _bo_role(cur):
+    """Xoá role thử nghiệm kèm mọi quyền đã cấp cho nó.
+
+    `DROP ROLE` thất bại khi role còn được tham chiếu trong các GRANT / ALTER DEFAULT PRIVILEGES, nên
+    một lần chạy bị ngắt giữa đường sẽ làm hỏng mọi lần chạy sau nếu không `DROP OWNED BY` trước.
+    `DROP OWNED BY` lại đòi role phải tồn tại, nên phải kiểm tra trước.
+    """
+    cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [TEST_ROLE])
+    if cur.fetchone():
+        cur.execute(f"DROP OWNED BY {TEST_ROLE}")
+    cur.execute(f"DROP ROLE IF EXISTS {TEST_ROLE}")
+
+
 @pytest.fixture
 def runtime_role(db):
     """Role dùng-một-lần trong cụm dữ liệu kiểm thử, đã được cấp quyền như procurement_app."""
     with connection.cursor() as cur:
-        cur.execute(f"DROP ROLE IF EXISTS {TEST_ROLE}")
+        _bo_role(cur)  # dọn tàn dư của lần chạy trước (nếu có) trước khi tạo lại
         cur.execute(f"CREATE ROLE {TEST_ROLE} LOGIN PASSWORD 'pytest-khong-bi-mat'")
     call_command("apply_db_grants", "--role", TEST_ROLE, verbosity=0)
     cfg = connection.settings_dict
@@ -86,8 +99,7 @@ def runtime_role(db):
     finally:
         conn.close()
         with connection.cursor() as cur:
-            cur.execute(f"DROP OWNED BY {TEST_ROLE}")  # bỏ các GRANT/ALTER DEFAULT PRIVILEGES
-            cur.execute(f"DROP ROLE IF EXISTS {TEST_ROLE}")
+            _bo_role(cur)
 
 
 @pytest.mark.django_db(transaction=True)

@@ -140,7 +140,7 @@ def test_nginx_conf_never_serves_media():
 def test_nginx_conf_security_directives():
     conf = NGINX_CONF.read_text(encoding="utf-8")
     assert "ssl_protocols TLSv1.2 TLSv1.3;" in conf
-    assert "Strict-Transport-Security" in conf
+    assert 'Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"' in conf
     assert "X-Content-Type-Options" in conf and "nosniff" in conf
     assert "Referrer-Policy" in conf and "same-origin" in conf
     assert "client_max_body_size 26m;" in conf
@@ -153,6 +153,17 @@ def test_nginx_conf_security_directives():
     # Django gửi cùng bốn header này: ẩn bản của ứng dụng để phản hồi không có header trùng
     for header in ("Strict-Transport-Security", "X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options"):
         assert f"proxy_hide_header {header};" in conf
+
+
+def test_nginx_hsts_header_matches_what_django_would_send():
+    """nginx ẩn header của ứng dụng và phát bản của mình, nên hai bên phải trùng từng chữ —
+    nếu không thì `SECURE_HSTS_PRELOAD` ở prod chỉ là trang trí (directive bị mất trên đường ra)."""
+    conf = NGINX_CONF.read_text(encoding="utf-8")
+    prod = (REPO / "src" / "config" / "settings" / "prod.py").read_text(encoding="utf-8")
+    assert "SECURE_HSTS_SECONDS = 31536000" in prod
+    assert "SECURE_HSTS_INCLUDE_SUBDOMAINS = True" in prod
+    assert "SECURE_HSTS_PRELOAD = True" in prod
+    assert 'Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"' in conf
 
 
 def test_nginx_port_80_only_redirects_to_https():
@@ -222,6 +233,38 @@ def test_install_script_contract():
     assert "docker compose" in text or "dc " in text
 
 
+def test_manage_owner_keeps_the_owner_url_out_of_the_docker_argv():
+    """Mật khẩu owner không được nằm trong danh sách tham số (ai cũng đọc được bằng `ps`)."""
+    common = (SCRIPTS / "_common.sh").read_text(encoding="utf-8")
+    assert 'DATABASE_URL="$DATABASE_URL_OWNER" dc run --rm -T -e DATABASE_URL app' in common
+    assert '-e DATABASE_URL="' not in common  # dạng truyền kèm giá trị
+
+
+@pytest.mark.parametrize("name", ["backup.sh", "restore.sh", "upgrade.sh"])
+def test_cleanup_and_report_run_on_every_failure_path(name):
+    """`loi` kết thúc bằng `exit` và lỗi thường đi qua `lệnh || loi`, nên bẫy ERR không đủ:
+    phải bẫy EXIT kèm cờ hoàn tất, nếu không hết thời gian chờ healthcheck sẽ không dọn/không báo."""
+    text = (SCRIPTS / name).read_text(encoding="utf-8")
+    assert "trap" in text and "EXIT" in text, f"{name} phải bẫy EXIT"
+    assert "ERR\n" not in text.replace("EXIT", ""), f"{name} không nên chỉ dựa vào bẫy ERR"
+    assert "HOAN_TAT=0" in text and "HOAN_TAT=1" in text, f"{name} thiếu cờ hoàn tất"
+
+
+def test_printed_compose_commands_include_the_override_file():
+    """Lệnh in ra cho người dùng phải kèm tệp ghi đè, nếu không họ chạy với cấu hình khác."""
+    common = (SCRIPTS / "_common.sh").read_text(encoding="utf-8")
+    assert "dc_cmd()" in common and "docker-compose.override.yml" in common.replace(
+        "OVERRIDE_FILE", "docker-compose.override.yml"
+    )
+    for name in SCRIPT_NAMES + ["_common.sh"]:
+        text = (SCRIPTS / name).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            if "docker compose -f" in line and "printf 'docker compose -f %s" not in line:
+                assert "dc_cmd" in line, f"{name}: lệnh in ra phải dùng dc_cmd — {line.strip()}"
+
+
 def test_backup_script_contract():
     backup = (SCRIPTS / "backup.sh").read_text(encoding="utf-8")
     assert "pg_dump" in backup and "-Fc" in backup
@@ -232,7 +275,7 @@ def test_backup_script_contract():
     assert backup.index("BACKUP_DIR_ARG=") < backup.index("\ndoc_env\n")
     # ghi ra .partial rồi mới đổi tên: bản dở dang không được tính là bản sao lưu
     assert ".partial" in backup and 'mv -- "$DB_FILE.partial"' in backup
-    assert "trap" in backup and "ERR" in backup
+    assert "trap don_dep_khi_thoat EXIT" in backup
     assert "tar_rc" in backup  # tar mã 1 (tệp thay đổi khi đọc) không phải lỗi chết
 
 
@@ -247,7 +290,7 @@ def test_restore_script_verifies_before_destroying():
     # không xoá thẳng media: giải nén ra thư mục tạm rồi đổi chỗ (và không bỏ sót tệp ẩn)
     assert "rm -rf /app/media/*" not in restore
     assert ".restore-new" in restore and "find /app/media -mindepth 1" in restore
-    assert "trap bao_loi_khoi_phuc ERR" in restore
+    assert "trap bao_loi_khoi_phuc EXIT" in restore
     assert "dc restart nginx" in restore
 
 
@@ -258,7 +301,13 @@ def test_upgrade_script_contract():
     # giữ ảnh cũ để lùi được, và in rõ đường lùi khi lỗi
     assert "procurement-app:previous" in upgrade
     assert upgrade.index("procurement-app:previous") < upgrade.index("dc build")
-    assert "trap bao_loi_nang_cap ERR" in upgrade
+    assert "trap bao_loi_nang_cap EXIT" in upgrade
+    # thẻ previous là "bản tốt gần nhất": chạy lại sau một lần lỗi không được ghi đè nó
+    tag_block = upgrade[upgrade.index("ANH_CU_ID=") : upgrade.index("dc build")]
+    assert "if docker image inspect procurement-app:previous" in tag_block
+    assert "procurement-app:before-" in tag_block  # mỗi lần chạy giữ thêm một thẻ riêng
+    # con trỏ previous chỉ dịch lên sau khi nâng cấp xong
+    assert upgrade.index('docker tag "$ANH_CU_ID" procurement-app:previous') > upgrade.index("collectstatic")
     assert "dc restart app worker nginx" not in upgrade  # `up -d` đã tạo lại container cần thiết
 
 
